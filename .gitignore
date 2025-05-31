@@ -74,8 +74,9 @@ temp/
 dump.rdb
 
 # Environment variables - keeping .env.example but ignoring .env
-# Uncomment the next line if you want to ignore .env files
-# .env
+.env
+.env.*
+!.env.example
 
 # Node.js
 node_modules/
