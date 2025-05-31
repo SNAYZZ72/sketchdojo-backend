@@ -1,0 +1,164 @@
+# =============================================================================
+# docker/docker-compose.yml
+# =============================================================================
+version: '3.8'
+
+services:
+  # API Service
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=mysql+asyncmy://sketchdojo:password@mysql:3306/sketchdojo
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    depends_on:
+      - mysql
+      - redis
+    volumes:
+      - ./storage:/app/storage
+    networks:
+      - sketchdojo-network
+    restart: unless-stopped
+
+  # Celery Worker
+  celery-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: celery -A app.core.celery_app worker --loglevel=info --queues=ai_processing,image_generation,webtoon_processing
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=mysql+asyncmy://sketchdojo:password@mysql:3306/sketchdojo
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    depends_on:
+      - mysql
+      - redis
+    volumes:
+      - ./storage:/app/storage
+    networks:
+      - sketchdojo-network
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+
+  # Celery Beat (Scheduler)
+  celery-beat:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: celery -A app.core.celery_app beat --loglevel=info
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=mysql+asyncmy://sketchdojo:password@mysql:3306/sketchdojo
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - sketchdojo-network
+    restart: unless-stopped
+
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=sketchdojo
+      - MYSQL_USER=sketchdojo
+      - MYSQL_PASSWORD=password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - sketchdojo-network
+    restart: unless-stopped
+
+  # Redis Cache & Message Broker
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - sketchdojo-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+  # Prometheus (Monitoring)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - sketchdojo-network
+    restart: unless-stopped
+
+  # Grafana (Metrics Dashboard)
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - sketchdojo-network
+    restart: unless-stopped
+
+  # Jaeger (Distributed Tracing)
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - sketchdojo-network
+    restart: unless-stopped
+
+  # Nginx (Reverse Proxy)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/ssl:/etc/ssl/certs
+      - ./storage:/app/storage:ro
+    depends_on:
+      - api
+    networks:
+      - sketchdojo-network
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  sketchdojo-network:
+    driver: bridge
+

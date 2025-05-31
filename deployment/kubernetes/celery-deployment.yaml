@@ -1,0 +1,59 @@
+# =============================================================================
+# deployment/kubernetes/celery-deployment.yaml
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sketchdojo-celery-worker
+  namespace: sketchdojo
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: sketchdojo-celery-worker
+  template:
+    metadata:
+      labels:
+        app: sketchdojo-celery-worker
+    spec:
+      containers:
+      - name: celery-worker
+        image: sketchdojo/api:latest
+        command: ["celery", "-A", "app.core.celery_app", "worker", "--loglevel=info"]
+        env:
+        - name: ENVIRONMENT
+          value: "production"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: sketchdojo-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: sketchdojo-secrets
+              key: redis-url
+        - name: CELERY_BROKER_URL
+          valueFrom:
+            secretKeyRef:
+              name: sketchdojo-secrets
+              key: celery-broker-url
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sketchdojo-secrets
+              key: openai-api-key
+        - name: STABILITY_AI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sketchdojo-secrets
+              key: stability-ai-api-key
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
