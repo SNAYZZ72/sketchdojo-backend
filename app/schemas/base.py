@@ -5,15 +5,17 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class BaseSchema(BaseModel):
     """Base schema with common fields."""
 
-    class Config:
-        from_attributes = True
-        use_enum_values = True
+    model_config = ConfigDict(
+        from_attributes=True,
+        use_enum_values=True,
+        arbitrary_types_allowed=True
+    )
 
 
 class BaseEntitySchema(BaseSchema):

@@ -7,8 +7,10 @@ import secrets
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import field_validator
+from pydantic import field_validator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.core.security import SecuritySettings
 
 
 class Settings(BaseSettings):
@@ -21,7 +23,8 @@ class Settings(BaseSettings):
     app_name: str = "SketchDojo Backend"
     app_version: str = "1.0.0"
     debug: bool = False
-    secret_key: str = secrets.token_urlsafe(32)
+    # Load secret key from environment variable with a fallback for development
+    secret_key: str = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
@@ -93,19 +96,72 @@ class Settings(BaseSettings):
     task_timeout_seconds: int = 600
     cleanup_interval_hours: int = 24
 
-    @field_validator("cors_origins", mode="before")
-    def assemble_cors_origins(cls, v):
-        if isinstance(v, str) and not v.startswith("["):
-            return [i.strip() for i in v.split(",")]
-        elif isinstance(v, (list, str)):
-            return v
-        raise ValueError(v)
+    # Security Configuration
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
 
+    # Enhanced CORS validation
+    @field_validator("cors_origins", mode="before")
+    def validate_cors_origins(cls, v):
+        if isinstance(v, str) and not v.startswith("["):
+            origins = [i.strip() for i in v.split(",")]
+        elif isinstance(v, (list, str)):
+            origins = v if isinstance(v, list) else [v]
+        else:
+            raise ValueError("Invalid CORS origins format")
+
+        # Security check: warn about wildcard in production
+        if "*" in origins and os.getenv("ENVIRONMENT") == "production":
+            logger.warning("Wildcard CORS origin detected in production environment")
+
+        return origins
+
+    # Database URL validation with security checks
     @field_validator("database_url", mode="before")
-    def validate_database_url(cls, v):
+    def validate_database_url_security(cls, v):
         if not v.startswith(("mysql+", "postgresql+", "sqlite+")):
             raise ValueError("database_url must specify a valid database driver")
+
+        # Security check: warn about default credentials
+        if "password@" in v or "root:root@" in v or "admin:admin@" in v:
+            logger.warning("Default database credentials detected - change in production")
+
         return v
+
+    # Redis URL validation
+    @field_validator("redis_url", mode="before")
+    def validate_redis_url(cls, v):
+        if not v.startswith("redis://") and not v.startswith("rediss://"):
+            raise ValueError("redis_url must be a valid Redis URL")
+        return v
+
+    # API key validation
+    @field_validator("openai_api_key", "anthropic_api_key", "stability_ai_api_key", mode="before")
+    def validate_api_keys(cls, v):
+        if v and len(v) < 10:
+            raise ValueError("API key appears to be too short")
+        return v
+
+    def get_cors_config(self) -> dict:
+        """Get CORS configuration."""
+        return {
+            "allow_origins": self.cors_origins,
+            "allow_credentials": self.security.cors_allow_credentials,
+            "allow_methods": self.security.cors_allow_methods,
+            "allow_headers": self.security.cors_allow_headers,
+        }
+
+    def is_production(self) -> bool:
+        """Check if running in production environment."""
+        return self.environment.lower() == "production"
+
+    def get_jwt_config(self) -> dict:
+        """Get JWT configuration."""
+        return {
+            "secret_key": self.secret_key,
+            "algorithm": self.security.algorithm,
+            "access_token_expire_minutes": self.security.access_token_expire_minutes,
+            "refresh_token_expire_days": self.security.refresh_token_expire_days,
+        }
 
 
 class DevelopmentSettings(Settings):

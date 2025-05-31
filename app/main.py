@@ -14,6 +14,8 @@ from app.core.database import close_db, init_db
 from app.core.logging import setup_logging
 from app.core.middleware import LoggingMiddleware, RateLimitMiddleware
 from app.infrastructure.monitoring.health import health_router
+from app.core.security import SecurityMiddleware, SecuritySettings
+
 
 # Setup logging
 setup_logging()
@@ -59,8 +61,12 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(LoggingMiddleware)
 app.add_middleware(RateLimitMiddleware)
 
+# Add security middleware
+security_settings = SecuritySettings()
+app.add_middleware(SecurityMiddleware, settings=security_settings)
+
 # Include routers
-app.include_router(api_router, prefix=settings.api_v1_prefix)
+app.include_router(api_router)
 app.include_router(health_router, prefix="/health", tags=["health"])
 
 

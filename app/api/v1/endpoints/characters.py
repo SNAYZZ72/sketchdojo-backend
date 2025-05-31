@@ -36,7 +36,7 @@ async def get_project_characters(
 
     try:
         characters = await character_service.get_project_characters(project_id, current_user.id)
-        return [CharacterResponse.from_orm(char) for char in characters]
+        return [CharacterResponse.model_validate(char) for char in characters]
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PermissionError:

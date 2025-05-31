@@ -33,7 +33,7 @@ async def get_webtoon_panels(
 
     try:
         panels = await panel_service.get_webtoon_panels(webtoon_id, current_user.id)
-        return [PanelResponse.from_orm(panel) for panel in panels]
+        return [PanelResponse.model_validate(panel) for panel in panels]
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PermissionError:
@@ -112,7 +112,7 @@ async def generate_panel(
     # Update task with Celery ID
     await task_service.start_task(task.id, celery_task.id)
 
-    return TaskResponse.from_orm(task)
+    return TaskResponse.model_validate(task)
 
 
 @router.get("/{panel_id}", response_model=PanelResponse)

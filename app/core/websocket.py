@@ -4,7 +4,7 @@
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 from uuid import UUID
 
@@ -32,10 +32,11 @@ class ConnectionManager:
         self.user_connections[user_id].add(connection_id)
 
         # Store connection metadata
+        now = datetime.now(timezone.utc)
         self.connection_metadata[connection_id] = {
             "user_id": user_id,
-            "connected_at": datetime.utcnow(),
-            "last_ping": datetime.utcnow(),
+            "connected_at": now,
+            "last_ping": now,
         }
 
         logger.info(f"WebSocket connected: {connection_id} (user: {user_id})")

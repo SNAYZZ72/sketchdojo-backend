@@ -31,7 +31,7 @@ async def get_project_scenes(
 
     try:
         scenes = await scene_service.get_project_scenes(project_id, current_user.id)
-        return [SceneResponse.from_orm(scene) for scene in scenes]
+        return [SceneResponse.model_validate(scene) for scene in scenes]
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PermissionError:

@@ -61,7 +61,7 @@ class CachedWebtoonService(WebtoonService):
         # Fetch from database
         projects, _ = await self.project_repo.get_user_projects_paginated(user_id, 1, 100)
 
-        project_responses = [ProjectResponse.from_orm(p) for p in projects]
+        project_responses = [ProjectResponse.model_validate(p) for p in projects]
 
         # Cache for 30 minutes
         await self.cache.set_user_cache(

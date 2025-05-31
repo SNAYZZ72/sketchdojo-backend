@@ -36,7 +36,7 @@ async def get_user_tasks(
     )
 
     return PaginatedResponse(
-        items=[TaskListResponse.from_orm(task) for task in tasks],
+        items=[TaskListResponse.model_validate(task) for task in tasks],
         total=total,
         page=page,
         size=size,

@@ -43,7 +43,7 @@ class TaskService:
         if task.user_id != user_id:
             raise PermissionError("Not authorized to access this task")
 
-        return TaskResponse.from_orm(task)
+        return TaskResponse.model_validate(task)
 
     async def get_user_tasks_paginated(
         self,
@@ -110,9 +110,8 @@ class TaskService:
         # Update task status
         task.status = TaskStatus.CANCELLED
         updated_task = await self.task_repo.update(task)
-
-        logger.info(f"Task cancelled: {task_id}")
-        return TaskResponse.from_orm(updated_task)
+        logger.info(f"Task {task_id} updated successfully")
+        return TaskResponse.model_validate(updated_task)
 
     async def retry_task(self, task_id: UUID, user_id: UUID) -> TaskResponse:
         """Retry a failed task."""
@@ -134,4 +133,4 @@ class TaskService:
         # This would typically involve calling the appropriate Celery task again
 
         logger.info(f"Task retry queued: {task_id} attempt={task.retry_count}")
-        return TaskResponse.from_orm(updated_task)
+        return TaskResponse.model_validate(updated_task)

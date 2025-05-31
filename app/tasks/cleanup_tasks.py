@@ -22,7 +22,7 @@ def cleanup_expired_tasks():
         logger.info("Starting task cleanup")
 
         # Clean up tasks older than 7 days
-        cutoff_date = datetime.utcnow() - timedelta(days=7)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=7)
 
         # In a real implementation, you would:
         # 1. Query database for old tasks
@@ -61,7 +61,7 @@ def health_check():
     """Health check task for monitoring."""
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "worker_id": current_task.request.hostname,
     }
 

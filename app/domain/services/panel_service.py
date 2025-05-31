@@ -48,7 +48,7 @@ class PanelService:
         saved_panel = await self.panel_repo.create(panel)
 
         logger.info(f"Panel created: {saved_panel.id} for webtoon {webtoon_id}")
-        return PanelResponse.from_orm(saved_panel)
+        return PanelResponse.model_validate(saved_panel)
 
     async def get_panel(self, panel_id: UUID, user_id: UUID) -> PanelResponse:
         """Get a panel by ID."""
@@ -63,7 +63,7 @@ class PanelService:
 
         # Would check project ownership here
 
-        return PanelResponse.from_orm(panel)
+        return PanelResponse.model_validate(panel)
 
     async def get_webtoon_panels(self, webtoon_id: UUID, user_id: UUID) -> List[Panel]:
         """Get all panels for a webtoon."""
@@ -109,7 +109,7 @@ class PanelService:
         updated_panel = await self.panel_repo.update(panel)
 
         logger.info(f"Panel updated: {panel_id}")
-        return PanelResponse.from_orm(updated_panel)
+        return PanelResponse.model_validate(updated_panel)
 
     async def delete_panel(self, panel_id: UUID, user_id: UUID):
         """Delete a panel."""

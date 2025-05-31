@@ -88,7 +88,7 @@ async def generate_webtoon(
     # Update task with Celery ID
     await task_service.start_task(task.id, celery_task.id)
 
-    return TaskResponse.from_orm(task)
+    return TaskResponse.model_validate(task)
 
 
 @router.get("/{webtoon_id}", response_model=WebtoonResponse)

@@ -6,7 +6,7 @@ import logging
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
@@ -34,6 +34,9 @@ AsyncSessionLocal = async_sessionmaker(
 
 # Base class for database models
 Base = declarative_base()
+
+# For type hints and IDE support
+__all__ = ['Base', 'AsyncSessionLocal', 'get_db']
 
 
 async def get_db() -> AsyncSession:

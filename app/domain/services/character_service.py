@@ -44,7 +44,7 @@ class CharacterService:
         saved_character = await self.character_repo.create(character)
 
         logger.info(f"Character created: {saved_character.id} for project {project_id}")
-        return CharacterResponse.from_orm(saved_character)
+        return CharacterResponse.model_validate(saved_character)
 
     async def get_character(self, character_id: UUID, user_id: UUID) -> CharacterResponse:
         """Get a character by ID."""
@@ -57,7 +57,7 @@ class CharacterService:
         if not project or project.user_id != user_id:
             raise PermissionError("Not authorized to access this character")
 
-        return CharacterResponse.from_orm(character)
+        return CharacterResponse.model_validate(character)
 
     async def get_project_characters(self, project_id: UUID, user_id: UUID) -> List[Character]:
         """Get all characters for a project."""
@@ -92,7 +92,7 @@ class CharacterService:
         updated_character = await self.character_repo.update(character)
 
         logger.info(f"Character updated: {character_id}")
-        return CharacterResponse.from_orm(updated_character)
+        return CharacterResponse.model_validate(updated_character)
 
     async def delete_character(self, character_id: UUID, user_id: UUID):
         """Delete a character."""

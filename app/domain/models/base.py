@@ -2,7 +2,7 @@
 # app/domain/models/base.py
 # =============================================================================
 from abc import ABC
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID, uuid4
 
@@ -12,8 +12,9 @@ class DomainEntity(ABC):
 
     def __init__(self, id: Optional[UUID] = None):
         self.id = id or uuid4()
-        self.created_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        now = datetime.now(timezone.utc)
+        self.created_at = now
+        self.updated_at = now
 
     def __eq__(self, other):
         if not isinstance(other, self.__class__):

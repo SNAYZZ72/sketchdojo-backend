@@ -25,6 +25,7 @@ celery_app = Celery(
 )
 
 # Configure Celery
+# Configure Celery
 celery_app.conf.update(
     task_serializer=settings.celery_task_serializer,
     result_serializer=settings.celery_result_serializer,
@@ -39,6 +40,9 @@ celery_app.conf.update(
     worker_disable_rate_limits=False,
     task_compression="gzip",
     result_compression="gzip",
+    # Windows-specific configuration
+    worker_pool='solo',  # Use solo pool on Windows
+    broker_connection_retry_on_startup=True,  # Fix deprecation warning
 )
 
 # Define task routes and queues

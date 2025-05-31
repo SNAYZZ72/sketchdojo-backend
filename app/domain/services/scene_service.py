@@ -49,7 +49,7 @@ class SceneService:
         saved_scene = await self.scene_repo.create(scene)
 
         logger.info(f"Scene created: {saved_scene.id} for project {project_id}")
-        return SceneResponse.from_orm(saved_scene)
+        return SceneResponse.model_validate(saved_scene)
 
     async def get_scene(self, scene_id: UUID, user_id: UUID) -> SceneResponse:
         """Get a scene by ID."""
@@ -62,7 +62,7 @@ class SceneService:
         if not project or project.user_id != user_id:
             raise PermissionError("Not authorized to access this scene")
 
-        return SceneResponse.from_orm(scene)
+        return SceneResponse.model_validate(scene)
 
     async def get_project_scenes(self, project_id: UUID, user_id: UUID) -> List[Scene]:
         """Get all scenes for a project."""
@@ -97,7 +97,7 @@ class SceneService:
         updated_scene = await self.scene_repo.update(scene)
 
         logger.info(f"Scene updated: {scene_id}")
-        return SceneResponse.from_orm(updated_scene)
+        return SceneResponse.model_validate(updated_scene)
 
     async def delete_scene(self, scene_id: UUID, user_id: UUID):
         """Delete a scene."""

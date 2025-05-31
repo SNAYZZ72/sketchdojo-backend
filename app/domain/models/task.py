@@ -2,7 +2,7 @@
 # app/domain/models/task.py
 # =============================================================================
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Optional
 from uuid import UUID
@@ -65,7 +65,7 @@ class Task(DomainEntity):
     def start(self, celery_task_id: str) -> None:
         """Mark task as started."""
         self.status = TaskStatus.RUNNING
-        self.started_at = datetime.utcnow()
+        self.started_at = datetime.now(timezone.utc)
         self.celery_task_id = celery_task_id
 
     def update_progress(self, percentage: float, current_step: Optional[str] = None) -> None:
@@ -77,14 +77,14 @@ class Task(DomainEntity):
     def complete(self, result_data: Dict[str, Any]) -> None:
         """Mark task as completed."""
         self.status = TaskStatus.COMPLETED
-        self.completed_at = datetime.utcnow()
+        self.completed_at = datetime.now(timezone.utc)
         self.result_data = result_data
         self.progress_percentage = 100.0
 
     def fail(self, error_message: str) -> None:
         """Mark task as failed."""
         self.status = TaskStatus.FAILED
-        self.completed_at = datetime.utcnow()
+        self.completed_at = datetime.now(timezone.utc)
         self.error_message = error_message
 
     def can_retry(self) -> bool:

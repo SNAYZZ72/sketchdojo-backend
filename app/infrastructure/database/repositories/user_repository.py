@@ -135,8 +135,8 @@ class UserRepository(UserRepositoryInterface):
 
     async def update_last_login(self, user_id: UUID) -> None:
         """Update user's last login timestamp."""
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         await self.session.execute(
-            update(UserModel).where(UserModel.id == user_id).values(updated_at=datetime.utcnow())
+            update(UserModel).where(UserModel.id == user_id).values(updated_at=datetime.now(timezone.utc))
         )

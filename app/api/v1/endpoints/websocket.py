@@ -3,6 +3,7 @@
 # =============================================================================
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
@@ -71,7 +72,7 @@ async def handle_websocket_message(
 
     if message_type == "ping":
         # Respond to ping
-        pong_message = {"type": "pong", "timestamp": datetime.utcnow().isoformat()}
+        pong_message = {"type": "pong", "timestamp": datetime.now(timezone.utc).isoformat()}
         await manager.send_personal_message(pong_message, connection_id)
 
     elif message_type == "subscribe_task":

@@ -36,7 +36,7 @@ async def get_projects(
     projects, total = await project_repo.get_user_projects_paginated(current_user.id, page, size)
 
     return PaginatedResponse(
-        items=[ProjectListResponse.from_orm(p) for p in projects],
+        items=[ProjectListResponse.model_validate(p) for p in projects],
         total=total,
         page=page,
         size=size,
@@ -74,7 +74,7 @@ async def get_project(
     if not project or project.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
-    return ProjectResponse.from_orm(project)
+    return ProjectResponse.model_validate(project)
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)

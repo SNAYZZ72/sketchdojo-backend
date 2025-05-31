@@ -47,7 +47,7 @@ class WebtoonService:
         saved_project = await self.project_repo.create(project)
 
         logger.info(f"Project created: {saved_project.id} by user {user_id}")
-        return ProjectResponse.from_orm(saved_project)
+        return ProjectResponse.model_validate(saved_project)
 
     async def get_project(self, project_id: UUID, user_id: UUID) -> ProjectResponse:
         """Get a project by ID."""
@@ -58,7 +58,7 @@ class WebtoonService:
         if project.user_id != user_id:
             raise PermissionError("Not authorized to access this project")
 
-        return ProjectResponse.from_orm(project)
+        return ProjectResponse.model_validate(project)
 
     async def update_project(
         self, project_id: UUID, user_id: UUID, project_data: ProjectUpdate
@@ -84,7 +84,7 @@ class WebtoonService:
         updated_project = await self.project_repo.update(project)
 
         logger.info(f"Project updated: {project_id}")
-        return ProjectResponse.from_orm(updated_project)
+        return ProjectResponse.model_validate(updated_project)
 
     async def delete_project(self, project_id: UUID, user_id: UUID):
         """Delete a project."""
@@ -132,7 +132,7 @@ class WebtoonService:
         await self.project_repo.update(project)
 
         logger.info(f"Webtoon created: {saved_webtoon.id} for project {project_id}")
-        return WebtoonResponse.from_orm(saved_webtoon)
+        return WebtoonResponse.model_validate(saved_webtoon)
 
     async def get_webtoon(self, webtoon_id: UUID, user_id: UUID) -> WebtoonResponse:
         """Get a webtoon by ID."""
@@ -148,7 +148,7 @@ class WebtoonService:
         if not project or project.user_id != user_id:
             raise PermissionError("Not authorized to access this webtoon")
 
-        return WebtoonResponse.from_orm(webtoon)
+        return WebtoonResponse.model_validate(webtoon)
 
     async def update_webtoon(
         self, webtoon_id: UUID, user_id: UUID, webtoon_data: WebtoonUpdate
@@ -176,7 +176,7 @@ class WebtoonService:
         updated_webtoon = await self.webtoon_repo.update(webtoon)
 
         logger.info(f"Webtoon updated: {webtoon_id}")
-        return WebtoonResponse.from_orm(updated_webtoon)
+        return WebtoonResponse.model_validate(updated_webtoon)
 
     async def publish_webtoon(self, webtoon_id: UUID, user_id: UUID) -> WebtoonResponse:
         """Publish a webtoon."""
@@ -209,4 +209,4 @@ class WebtoonService:
         updated_webtoon = await self.webtoon_repo.update(webtoon)
 
         logger.info(f"Webtoon published: {webtoon_id}")
-        return WebtoonResponse.from_orm(updated_webtoon)
+        return WebtoonResponse.model_validate(updated_webtoon)
