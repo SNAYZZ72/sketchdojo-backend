@@ -5,7 +5,6 @@ Generation orchestration service
 import logging
 from datetime import UTC, datetime
 from typing import Any, Dict, List
-from uuid import UUID, uuid4
 
 from app.application.dto.generation_dto import GenerationRequestDTO, GenerationResultDTO
 from app.application.interfaces.ai_provider import AIProvider
@@ -116,7 +115,9 @@ class GenerationService:
             # Step 1: Generate story structure
             logger.info("Generating story structure...")
             story_data = await self.ai_provider.generate_story(
-                request.prompt, request.art_style.value, request.additional_context
+                request.prompt,
+                request.art_style.value,
+                request.additional_context,
             )
 
             # Step 2: Create webtoon entity
@@ -241,7 +242,10 @@ class GenerationService:
                     {"style_config": style_config.to_prompt_text()},
                 )
 
-                local_path, public_url = await self.image_generator.generate_image(
+                (
+                    local_path,
+                    public_url,
+                ) = await self.image_generator.generate_image(
                     enhanced_prompt,
                     panel.dimensions.width,
                     panel.dimensions.height,

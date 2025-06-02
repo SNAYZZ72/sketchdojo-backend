@@ -27,7 +27,10 @@ class TestOpenAIProvider:
             {
                 "title": "Test Story",
                 "plot_summary": "A brave hero saves the world",
-                "setting": {"location": "Fantasy kingdom", "time_period": "Medieval"},
+                "setting": {
+                    "location": "Fantasy kingdom",
+                    "time_period": "Medieval",
+                },
                 "main_characters": [
                     {
                         "name": "Hero",
@@ -51,7 +54,8 @@ class TestOpenAIProvider:
         # Configure AsyncMock to be awaitable
         mock_create = AsyncMock()
         mock_create.return_value = mock_openai_response
-        
+
+
         with patch.object(
             ai_provider.client.chat.completions,
             "create",
@@ -85,7 +89,10 @@ class TestOpenAIProvider:
                         "visual_description": "Hero stands in the village square",
                         "characters": ["Hero"],
                         "dialogue": [
-                            {"character": "Hero", "text": "I must begin my quest"}
+                            {
+                                "character": "Hero",
+                                "text": "I must begin my quest",
+                            }
                         ],
                         "setting": "Village square",
                         "mood": "determined",
@@ -104,8 +111,14 @@ class TestOpenAIProvider:
         mock_create = AsyncMock()
         mock_create.return_value = mock_response
 
+        # Configure AsyncMock to be awaitable
+        mock_create = AsyncMock()
+        mock_create.return_value = mock_response
+
         with patch.object(
-            ai_provider.client.chat.completions, "create", return_value=mock_create()
+            ai_provider.client.chat.completions,
+            "create",
+            return_value=mock_create(),
         ):
             scenes = await ai_provider.generate_scene_descriptions(story, 1)
 

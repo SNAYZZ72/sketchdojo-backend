@@ -36,12 +36,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 )
             except json.JSONDecodeError:
                 await connection_manager.send_personal_message(
-                    {"type": "error", "message": "Invalid JSON format"}, client_id
+                    {"type": "error", "message": "Invalid JSON format"},
+                    client_id,
                 )
             except Exception as e:
                 logger.error(f"Error handling message from {client_id}: {str(e)}")
                 await connection_manager.send_personal_message(
-                    {"type": "error", "message": f"Error processing message: {str(e)}"},
+                    {
+                        "type": "error",
+                        "message": f"Error processing message: {str(e)}",
+                    },
                     client_id,
                 )
 
@@ -67,7 +71,10 @@ async def handle_websocket_message(
             await connection_manager.subscribe_to_task(client_id, task_id)
         else:
             await connection_manager.send_personal_message(
-                {"type": "error", "message": "task_id is required for subscription"},
+                {
+                    "type": "error",
+                    "message": "task_id is required for subscription",
+                },
                 client_id,
             )
 
@@ -77,7 +84,10 @@ async def handle_websocket_message(
             await connection_manager.unsubscribe_from_task(client_id, task_id)
         else:
             await connection_manager.send_personal_message(
-                {"type": "error", "message": "task_id is required for unsubscription"},
+                {
+                    "type": "error",
+                    "message": "task_id is required for unsubscription",
+                },
                 client_id,
             )
 
@@ -120,6 +130,9 @@ async def handle_websocket_message(
 
     else:
         await connection_manager.send_personal_message(
-            {"type": "error", "message": f"Unknown message type: {message_type}"},
+            {
+                "type": "error",
+                "message": f"Unknown message type: {message_type}",
+            },
             client_id,
         )

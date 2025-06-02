@@ -26,7 +26,8 @@ async def health_check(settings=Depends(get_settings)):
 
 @router.get("/detailed")
 async def detailed_health_check(
-    redis_cache: RedisCache = Depends(get_redis_cache), settings=Depends(get_settings)
+    redis_cache: RedisCache = Depends(get_redis_cache),
+    settings=Depends(get_settings),
 ):
     """Detailed health check including dependencies"""
     health_status = {

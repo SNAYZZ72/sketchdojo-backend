@@ -1,53 +1,87 @@
-# scripts/run_tests.sh
 #!/bin/bash
+# Test runner script for SketchDojo backend
 
-set -e
+set -e  # Exit on error
 
-echo "🧪 Running SketchDojo Test Suite"
-
-# Colors
+# Colors for output
 GREEN='\033[0;32m'
-RED='\033[0;31m'
 YELLOW='\033[1;33m'
-NC='\033[0m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
 
+# Helper function for status messages
 print_status() {
-    echo -e "${GREEN}[TEST]${NC} $1"
+    echo -e "${GREEN}==>${NC} $1"
 }
 
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
+# Default values
+COVERAGE=0
+VERBOSE=0
+E2E=0
 
-# Set up test environment
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        -c|--coverage)
+            COVERAGE=1
+            shift
+            ;;
+        -v|--verbose)
+            VERBOSE=1
+            shift
+            ;;
+        -e|--e2e)
+            E2E=1
+            shift
+            ;;
+        *)
+            # Unknown option
+            shift
+            ;;
+    esac
+done
+
+# Ensure virtual environment is activated
+if [ -z "$VIRTUAL_ENV" ]; then
+    print_status "Activating virtual environment..."
+    if [ -d ".venv" ]; then
+        source .venv/bin/activate
+    elif [ -d "venv" ]; then
+        source venv/bin/activate
+    else
+        echo -e "${RED}ERROR:${NC} Virtual environment not found. Please create and activate it first."
+        exit 1
+    fi
+fi
+
+# Set environment variables for testing
 export ENVIRONMENT=test
-export REDIS_URL=redis://localhost:6379/15  # Use different DB for tests
+export SKETCHDOJO_SETTINGS_MODULE=app.config
 
-# Install test dependencies
-print_status "Installing test dependencies..."
-pip install -r requirements/development.txt
+# Run unit tests
+if [ $VERBOSE -eq 1 ]; then
+    PYTEST_ARGS="-v"
+else
+    PYTEST_ARGS=""
+fi
 
-# Run linting
-print_status "Running code linting..."
-echo "🔍 Running flake8..."
-flake8 app/ --max-line-length=100 --ignore=E203,W503
+if [ $COVERAGE -eq 1 ]; then
+    print_status "Running tests with coverage..."
+    python -m pytest tests/unit $PYTEST_ARGS --cov=app --cov-report=term-missing
+else
+    print_status "Running unit tests..."
+    python -m pytest tests/unit $PYTEST_ARGS
+fi
 
-echo "🔍 Running mypy..."
-mypy app/ --ignore-missing-imports
+# Run integration tests
+print_status "Running integration tests..."
+python -m pytest tests/integration $PYTEST_ARGS
 
-echo "🔍 Running black (check only)..."
-black --check app/
+# Run E2E tests if requested
+if [ $E2E -eq 1 ]; then
+    print_status "Running end-to-end tests..."
+    python -m pytest tests/e2e $PYTEST_ARGS
+fi
 
-echo "🔍 Running isort (check only)..."
-isort --check-only app/
-
-# Run tests
-print_status "Running tests..."
-pytest tests/ -v \
-    --cov=app \
-    --cov-report=html \
-    --cov-report=term-missing \
-    --cov-fail-under=80
-
-print_status "✅ All tests completed!"
-echo "📊 Coverage report available at htmlcov/index.html"
+print_status "All tests completed successfully!"

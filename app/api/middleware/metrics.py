@@ -6,7 +6,6 @@ import time
 from typing import Callable
 
 from fastapi import Request, Response
-from prometheus_client import Counter, Gauge, Histogram
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.monitoring.metrics import (

@@ -3,7 +3,7 @@
 Scene domain entity
 """
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Dict, List
 from uuid import UUID, uuid4
 
 

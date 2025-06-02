@@ -41,33 +41,27 @@ class TestGenerationRoutes:
             "panel_count": 4,
         }
 
-        # Create a mock service with a mocked generate_webtoon_sync method
-        class MockGenerationService:
-            async def generate_webtoon_sync(self, *args, **kwargs):
-                return mock_result
+        # Create a more effective patch using the actual route handler's import path
+        with patch(
+            "app.application.services.generation_service.GenerationService.generate_webtoon_sync"
+        ) as mock_generate:
+            # Configure the mock to return our result
+            mock_generate.return_value = mock_result
 
-        # Replace the dependency directly
-        mock_service = MockGenerationService()
+            # Now make the request
+            response = client.get(
+                "/api/v1/generation/sync-test",
+                params={
+                    "prompt": "A brave hero's adventure",
+                    "art_style": "webtoon",
+                    "num_panels": 4,
+                },
+            )
 
-        def _get_mocked_generation_service(*args, **kwargs):
-            return mock_service
+            assert response.status_code == 200
+            data = response.json()
+            assert "webtoon_id" in data
+            assert data["title"] == "Test Webtoon"
 
-        # Apply the monkeypatch to the dependency function
-        monkeypatch.setattr(
-            "app.dependencies.get_generation_service", _get_mocked_generation_service
-        )
-
-        # Now make the request
-        response = client.get(
-            "/api/v1/generation/sync-test",
-            params={
-                "prompt": "A brave hero's adventure",
-                "art_style": "webtoon",
-                "num_panels": 4,
-            },
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert "webtoon_id" in data
-        assert data["title"] == "Test Webtoon"
+            # Verify the mock was called with the expected arguments
+            mock_generate.assert_called_once()

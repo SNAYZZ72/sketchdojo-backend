@@ -2,14 +2,12 @@ version: '3.8'
 
 services:
   backend:
-    build:
-      context: ..
-      dockerfile: ./docker/Dockerfile
+    build: .
     ports:
       - "8000:8000"
     volumes:
-      - ../storage:/app/storage
-      - ../logs:/app/logs
+      - ./storage:/app/storage
+      - ./logs:/app/logs
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=sqlite:///./sketchdojo.db
@@ -17,12 +15,7 @@ services:
       - STABILITY_API_KEY=${STABILITY_API_KEY}
       - ENVIRONMENT=development
       - DEBUG=true
-      - SKETCHDOJO_SETTINGS_MODULE=docker.docker-settings
-      # JWT authentication settings
-      - SECRET_KEY=${SECRET_KEY:-development_secret_key}
-      - JWT_SECRET=${JWT_SECRET:-development_jwt_secret}
-      - JWT_ALGORITHM=HS256
-      - JWT_EXPIRATION=1440  # 24 hours in minutes
+      - SKETCHDOJO_SETTINGS_MODULE=docker-settings
     depends_on:
       - redis
     restart: unless-stopped

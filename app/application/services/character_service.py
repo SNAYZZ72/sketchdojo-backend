@@ -4,7 +4,6 @@ Character management service
 """
 import logging
 from typing import Any, Dict, List, Optional
-from uuid import UUID
 
 from app.application.interfaces.ai_provider import AIProvider
 from app.domain.entities.character import Character, CharacterAppearance

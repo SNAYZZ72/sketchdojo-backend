@@ -2,7 +2,7 @@
 """
 Webtoon management API routes
 """
-from typing import List, Optional
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -110,11 +110,13 @@ async def add_panel(
     from app.domain.value_objects.dimensions import PanelDimensions, PanelSize
 
     scene = Scene(
-        description=request.scene_description, character_names=request.character_names
+        description=request.scene_description,
+        character_names=request.character_names,
     )
 
     panel = Panel(
-        scene=scene, dimensions=PanelDimensions.from_size(PanelSize(request.panel_size))
+        scene=scene,
+        dimensions=PanelDimensions.from_size(PanelSize(request.panel_size)),
     )
 
     webtoon_dto = await service.add_panel(webtoon_id, panel)

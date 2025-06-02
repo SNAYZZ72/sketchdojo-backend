@@ -7,7 +7,6 @@ import secrets
 import string
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from uuid import UUID
 
 
 def generate_correlation_id() -> str:

@@ -3,10 +3,10 @@
 Webtoon Data Transfer Objects
 """
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.domain.value_objects.style import ArtStyle
 

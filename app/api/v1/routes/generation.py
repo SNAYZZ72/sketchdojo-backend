@@ -2,17 +2,14 @@
 """
 Generation API routes
 """
-from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from fastapi.responses import JSONResponse
 
 from app.application.services.generation_service import GenerationService
 from app.dependencies import get_generation_service
 from app.schemas.generation_schemas import (
     GenerationRequest,
     GenerationResponse,
-    GenerationStatusResponse,
     PanelGenerationRequest,
 )
 from app.tasks.generation_tasks import start_webtoon_generation_task
@@ -45,7 +42,9 @@ async def generate_webtoon(
 
         # Add background task for actual generation
         background_tasks.add_task(
-            start_webtoon_generation_task, str(result_dto.task_id), request_dto.dict()
+            start_webtoon_generation_task,
+            str(result_dto.task_id),
+            request_dto.dict(),
         )
 
         return GenerationResponse(

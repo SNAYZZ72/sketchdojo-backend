@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.application.dto.task_dto import TaskDTO, TaskProgressDTO
+from app.application.dto.task_dto import TaskDTO
 from app.domain.entities.generation_task import GenerationTask, TaskStatus, TaskType
 
 

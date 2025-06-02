@@ -21,5 +21,8 @@ RUN mkdir -p storage/webtoons storage/panels storage/temp logs
 # Ensure the docker-settings.py module is importable
 RUN ln -sf /app/docker/docker-settings.py /app/docker_settings.py
 
-# Start the worker process
-CMD ["python", "-m", "app.worker.main"]
+# Expose port
+EXPOSE 8000
+
+# Start the application
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

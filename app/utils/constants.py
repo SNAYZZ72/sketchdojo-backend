@@ -4,7 +4,15 @@ Application constants
 """
 
 # Art Styles
-ART_STYLES = ["manga", "webtoon", "comic", "anime", "realistic", "sketch", "chibi"]
+ART_STYLES = [
+    "manga",
+    "webtoon",
+    "comic",
+    "anime",
+    "realistic",
+    "sketch",
+    "chibi",
+]
 
 # Panel Sizes
 PANEL_SIZES = ["full", "half", "third", "quarter"]

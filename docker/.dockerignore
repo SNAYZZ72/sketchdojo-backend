@@ -1,3 +1,8 @@
+# Git
+.git
+.gitignore
+.github
+
 # Python
 __pycache__/
 *.py[cod]
@@ -19,55 +24,29 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
-# Virtual environments
+# Virtual environment
 .env
 .venv
 env/
 venv/
 ENV/
-env.bak/
-venv.bak/
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
 *.swo
-*~
 
-# OS
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Git
-.git/
-.gitignore
-
-# Testing
-.coverage
+# Project specific
+storage/
+logs/
+*.log
 .pytest_cache/
-.tox/
 htmlcov/
+.coverage
+coverage.xml
 
-# Documentation
-docs/_build/
-
-# Development files
-*.dev
-*.local
-.env.local
-.env.development
-
-# Static files (will be generated)
-static/generated_images/
-static/temp/
-
-# Monitoring data
-monitoring/data/
+# Docker
+.dockerignore
+docker-compose.override.yml

@@ -3,8 +3,7 @@
 Common schemas used across multiple endpoints
 """
 from datetime import UTC, datetime
-from typing import List, Optional
-from uuid import UUID
+from typing import Optional
 
 from pydantic import BaseModel, Field
 

@@ -114,7 +114,11 @@ class PanelGeneratedEvent(WebSocketEvent):
 
     @classmethod
     def create(
-        cls, task_id: UUID, panel_id: UUID, image_url: str, sequence_number: int
+        cls,
+        task_id: UUID,
+        panel_id: UUID,
+        image_url: str,
+        sequence_number: int,
     ):
         return cls(
             event_type="panel_generated",

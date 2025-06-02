@@ -1,15 +1,12 @@
 """
 Integration tests for WebSocket functionality
 """
-import asyncio
 import json
-from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.websocket.connection_manager import ConnectionManager
 
 
 class TestWebSocketIntegration:

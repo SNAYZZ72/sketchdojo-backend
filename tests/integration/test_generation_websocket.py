@@ -3,7 +3,6 @@ Integration test for generation with WebSocket updates
 """
 import asyncio
 import json
-import time
 from uuid import uuid4
 
 import pytest
@@ -12,7 +11,6 @@ from fastapi.testclient import TestClient
 from app.config import get_settings
 from app.domain.repositories.task_repository import TaskRepository
 from app.main import create_app
-from app.schemas.generation_schemas import PanelGenerationRequest
 from app.websocket.connection_manager import get_connection_manager
 
 
@@ -49,7 +47,8 @@ class TestGenerationWithWebsocket:
             }
 
             response = client.post(
-                f"{get_settings().api_prefix}/generation/panel", json=panel_request
+                f"{get_settings().api_prefix}/generation/panel",
+                json=panel_request,
             )
 
             assert response.status_code == 200

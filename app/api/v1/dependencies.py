@@ -2,12 +2,11 @@
 """
 Route-specific dependencies for API v1
 """
-from typing import Any, Dict
+from typing import Dict
 from uuid import UUID
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Header, HTTPException
 
-from app.config import get_settings
 from app.utils.validators import validate_uuid
 
 

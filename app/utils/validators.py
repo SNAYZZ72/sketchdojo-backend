@@ -3,7 +3,6 @@
 Input validation utilities
 """
 import re
-from typing import List, Optional
 from uuid import UUID
 
 from app.utils.exceptions import ValidationError

@@ -2,9 +2,6 @@
 """
 Dependency injection configuration for FastAPI
 """
-import os
-from functools import lru_cache
-from typing import AsyncGenerator
 
 import redis.asyncio as redis
 from fastapi import Depends
@@ -26,7 +23,9 @@ from app.infrastructure.storage.file_storage import FileStorage
 from app.infrastructure.storage.memory_storage import MemoryStorage
 
 
-def get_redis_client(settings: Settings = Depends(get_settings)) -> redis.Redis:
+def get_redis_client(
+    settings: Settings = Depends(get_settings),
+) -> redis.Redis:
     """Get Redis client instance"""
     return redis.from_url(
         settings.redis_url,
@@ -45,14 +44,18 @@ def get_ai_provider(settings: Settings = Depends(get_settings)) -> AIProvider:
     )
 
 
-def get_image_generator(settings: Settings = Depends(get_settings)) -> ImageGenerator:
+def get_image_generator(
+    settings: Settings = Depends(get_settings),
+) -> ImageGenerator:
     """Get image generator instance"""
     return StabilityProvider(
         api_key=settings.stability_api_key, api_url=settings.stability_api_url
     )
 
 
-def get_storage_provider(settings: Settings = Depends(get_settings)) -> StorageProvider:
+def get_storage_provider(
+    settings: Settings = Depends(get_settings),
+) -> StorageProvider:
     """Get storage provider instance"""
     if settings.storage_type == "memory":
         return MemoryStorage()

@@ -4,7 +4,6 @@ Pytest configuration and fixtures
 """
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -40,7 +39,7 @@ def test_settings():
     )
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def memory_storage():
     """In-memory storage for testing"""
     storage = MemoryStorage()
@@ -48,19 +47,19 @@ async def memory_storage():
     storage.clear_all()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def webtoon_repository(memory_storage):
     """Webtoon repository with memory storage"""
     return WebtoonRepository(memory_storage)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def task_repository(memory_storage):
     """Task repository with memory storage"""
     return TaskRepository(memory_storage)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def webtoon_service(webtoon_repository):
     """Webtoon service for testing"""
     return WebtoonService(webtoon_repository)
@@ -88,8 +87,8 @@ def mock_ai_provider():
         "key_scenes": ["Opening scene", "Conflict", "Resolution"],
     }
 
-    # Mock scene generation
-    ai_provider.generate_scene_descriptions.return_value = [
+    # Create scene descriptions template
+    scene_templates = [
         {
             "visual_description": "Hero standing in the city",
             "characters": ["Test Hero"],
@@ -99,8 +98,58 @@ def mock_ai_provider():
             "panel_size": "full",
             "camera_angle": "medium",
             "special_effects": [],
-        }
+        },
+        {
+            "visual_description": "Hero confronts the villain",
+            "characters": ["Test Hero", "Villain"],
+            "dialogue": [{"character": "Test Hero", "text": "I will stop you!"}],
+            "setting": "Dark alley",
+            "mood": "tense",
+            "panel_size": "half",
+            "camera_angle": "low",
+            "special_effects": [],
+        },
+        {
+            "visual_description": "Epic battle scene",
+            "characters": ["Test Hero", "Villain"],
+            "dialogue": [{"character": "Test Hero", "text": "For justice!"}],
+            "setting": "City rooftop",
+            "mood": "action",
+            "panel_size": "full",
+            "camera_angle": "wide",
+            "special_effects": ["explosion"],
+        },
+        {
+            "visual_description": "Victory celebration",
+            "characters": ["Test Hero", "Citizens"],
+            "dialogue": [{"character": "Test Hero", "text": "Peace is restored!"}],
+            "setting": "City square",
+            "mood": "triumphant",
+            "panel_size": "full",
+            "camera_angle": "high",
+            "special_effects": ["sunset"],
+        },
     ]
+
+    # Make generate_scene_descriptions dynamic based on requested panel count
+    def mock_generate_scenes(*args, **kwargs):
+        # The method is called with positional args: generate_scene_descriptions(story_data, num_panels)
+        # If called with positional args
+        if len(args) >= 2:
+            story_data = args[0]
+            num_panels = args[1]
+        # If called with keyword args
+        else:
+            story_data = kwargs.get("story_data", {})
+            num_panels = kwargs.get("num_panels", 4)  # Default to 4 if not specified
+
+        # Return only the requested number of panels
+        return scene_templates[:num_panels]
+
+    # Set up the mock to use our dynamic function
+    ai_provider.generate_scene_descriptions = AsyncMock(
+        side_effect=mock_generate_scenes
+    )
 
     # Mock dialogue generation
     ai_provider.generate_dialogue.return_value = [
@@ -117,16 +166,23 @@ def mock_ai_provider():
 def mock_image_generator():
     """Mock image generator for testing"""
     image_gen = AsyncMock()
-    image_gen.is_available.return_value = True
-    image_gen.generate_image.return_value = (
+    # Use a regular MagicMock for synchronous methods
+    image_gen.is_available = MagicMock(return_value=True)
+    # For async methods, use AsyncMock with proper return values
+    async_generate_mock = AsyncMock()
+    async_generate_mock.return_value = (
         "/path/to/test/image.png",
         "http://localhost:8000/static/test_image.png",
     )
-    image_gen.enhance_prompt.return_value = "Enhanced prompt"
+    image_gen.generate_image = async_generate_mock
+
+    async_enhance_mock = AsyncMock()
+    async_enhance_mock.return_value = "Enhanced prompt"
+    image_gen.enhance_prompt = async_enhance_mock
     return image_gen
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def generation_service(
     mock_ai_provider, mock_image_generator, webtoon_repository, task_repository
 ):

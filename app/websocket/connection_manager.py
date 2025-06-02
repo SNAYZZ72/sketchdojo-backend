@@ -5,10 +5,9 @@ WebSocket connection manager
 import json
 import logging
 from datetime import UTC, datetime
-from typing import Dict, List, Set
-from uuid import UUID
+from typing import Dict, Set
 
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
 

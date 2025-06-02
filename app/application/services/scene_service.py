@@ -3,8 +3,7 @@
 Scene processing service
 """
 import logging
-from typing import Any, Dict, List
-from uuid import UUID
+from typing import Dict, List
 
 from app.application.interfaces.ai_provider import AIProvider
 from app.domain.entities.character import Character

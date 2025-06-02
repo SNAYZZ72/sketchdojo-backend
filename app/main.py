@@ -66,7 +66,9 @@ def create_app() -> FastAPI:
 
     # Include API routes
     app.include_router(
-        webtoons.router, prefix=f"{settings.api_prefix}/webtoons", tags=["webtoons"]
+        webtoons.router,
+        prefix=f"{settings.api_prefix}/webtoons",
+        tags=["webtoons"],
     )
     app.include_router(
         generation.router,

@@ -2,9 +2,8 @@
 """
 Webtoon repository implementation using storage provider
 """
-import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from uuid import UUID
 
 from app.application.interfaces.storage_provider import StorageProvider
@@ -45,7 +44,6 @@ class WebtoonRepository(BaseRepository[Webtoon]):
 
     def _serialize_panel(self, panel) -> dict:
         """Serialize panel entity"""
-        from app.domain.entities.panel import Panel
 
         return {
             "id": str(panel.id),

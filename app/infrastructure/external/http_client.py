@@ -2,7 +2,6 @@
 """
 HTTP client utilities for external API calls
 """
-import asyncio
 import logging
 from typing import Any, Dict, Optional
 
@@ -29,7 +28,8 @@ class HTTPClient:
             await self._client.aclose()
 
     @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
     )
     async def post(
         self,
@@ -52,7 +52,8 @@ class HTTPClient:
             raise
 
     @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
     )
     async def get(
         self,

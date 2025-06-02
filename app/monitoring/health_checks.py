@@ -3,10 +3,9 @@
 Health check implementations
 """
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import redis.asyncio as redis
-from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +47,10 @@ async def check_redis_health(redis_client: redis.Redis) -> Dict[str, Any]:
         await redis_client.ping()
         return {"status": "healthy", "details": "Redis connection successful"}
     except Exception as e:
-        return {"status": "unhealthy", "details": f"Redis connection failed: {str(e)}"}
+        return {
+            "status": "unhealthy",
+            "details": f"Redis connection failed: {str(e)}",
+        }
 
 
 async def check_ai_provider_health() -> Dict[str, Any]:
@@ -61,7 +63,10 @@ async def check_ai_provider_health() -> Dict[str, Any]:
 
         return {"status": "healthy", "details": "AI provider configured"}
     except Exception as e:
-        return {"status": "unhealthy", "details": f"AI provider error: {str(e)}"}
+        return {
+            "status": "unhealthy",
+            "details": f"AI provider error: {str(e)}",
+        }
 
 
 async def check_image_generator_health() -> Dict[str, Any]:
@@ -72,11 +77,17 @@ async def check_image_generator_health() -> Dict[str, Any]:
         image_gen = get_image_generator()
 
         if image_gen.is_available():
-            return {"status": "healthy", "details": "Image generator available"}
+            return {
+                "status": "healthy",
+                "details": "Image generator available",
+            }
         else:
             return {
                 "status": "degraded",
                 "details": "Image generator not available, using placeholders",
             }
     except Exception as e:
-        return {"status": "unhealthy", "details": f"Image generator error: {str(e)}"}
+        return {
+            "status": "unhealthy",
+            "details": f"Image generator error: {str(e)}",
+        }

@@ -4,11 +4,8 @@ Background tasks for webtoon generation
 """
 import asyncio
 import logging
-from datetime import datetime
 from typing import Any, Dict
 from uuid import UUID
-
-from celery import current_task
 
 from app.tasks.celery_app import celery_app
 from app.websocket.connection_manager import get_connection_manager
@@ -72,7 +69,8 @@ async def generate_webtoon_async(
         )
 
         image_generator = StabilityProvider(
-            api_key=settings.stability_api_key, api_url=settings.stability_api_url
+            api_key=settings.stability_api_key,
+            api_url=settings.stability_api_url,
         )
 
         generation_service = GenerationService(
@@ -134,8 +132,14 @@ async def generate_webtoon_async(
             # Generate image
             if image_generator.is_available():
                 try:
-                    local_path, public_url = await image_generator.generate_image(
-                        enhanced_prompt, 1024, 1024, request_dto.art_style.value
+                    (
+                        local_path,
+                        public_url,
+                    ) = await image_generator.generate_image(
+                        enhanced_prompt,
+                        1024,
+                        1024,
+                        request_dto.art_style.value,
                     )
                     scene_data["image_url"] = public_url
                 except Exception as e:

@@ -1,64 +1,76 @@
 #!/bin/bash
+# Setup script for SketchDojo backend
 
-set -e
+set -e  # Exit on error
 
-echo "🛠️ Setting up SketchDojo Development Environment"
-
-# Colors
+# Colors for output
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
 
+# Helper function for status messages
 print_status() {
-    echo -e "${GREEN}[SETUP]${NC} $1"
+    echo -e "${GREEN}==>${NC} $1"
 }
 
+# Helper function for warnings
 print_warning() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
+    echo -e "${YELLOW}WARNING:${NC} $1"
 }
 
-# Check Python version
-print_status "Checking Python version..."
-python_version=$(python3 --version 2>&1 | cut -d' ' -f2)
-required_version="3.11"
-
-if [[ "$(printf '%s\n' "$required_version" "$python_version" | sort -V | head -n1)" != "$required_version" ]]; then
-    print_warning "Python 3.11+ required. Found: $python_version"
-    echo "Please install Python 3.11 or higher"
-    exit 1
+# Create virtual environment if it doesn't exist
+if [ ! -d ".venv" ]; then
+    print_status "Creating virtual environment..."
+    python -m venv .venv
+    print_status "Virtual environment created in .venv directory"
 fi
 
-print_status "Python version OK: $python_version"
-
-# Upgrade pip
-print_status "Upgrading pip..."
-pip install --upgrade pip
+# Activate virtual environment
+print_status "Activating virtual environment..."
+source .venv/bin/activate
 
 # Install dependencies
 print_status "Installing dependencies..."
-pip install -r requirements/development.txt
-
-# Install pre-commit hooks
-print_status "Installing pre-commit hooks..."
-pre-commit install
-
-# Create .env file if it doesn't exist
-if [ ! -f ".env" ]; then
-    print_status "Creating .env file from template..."
-    cp .env.example .env
-    print_warning "Please edit .env file with your API keys"
-fi
+pip install -U pip
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 # Create necessary directories
-print_status "Creating directories..."
-mkdir -p static/images static/generated_images static/temp logs
+print_status "Creating necessary directories..."
+mkdir -p storage/webtoons storage/panels storage/temp logs
 
-# Set permissions
-chmod +x scripts/*.sh
+# Generate .env file if it doesn't exist
+if [ ! -f ".env" ]; then
+    print_status "Creating .env file..."
+    cat << EOF > .env
+# SketchDojo Environment Variables
+# Replace with your actual values
 
-print_status "✅ Setup complete!"
-echo ""
-echo "Next steps:"
-echo "1. Edit .env file with your API keys"
-echo "2. Run 'make dev' or './scripts/start_development.sh' to start"
-echo "3. Visit http://localhost:8000/docs for API documentation"
+# Security
+SECRET_KEY=development_secret_key_replace_in_production
+JWT_SECRET=development_jwt_secret_replace_in_production
+
+# API Settings
+ENVIRONMENT=development
+DEBUG=true
+
+# AI Services
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-4
+STABILITY_API_KEY=your_stability_api_key_here
+
+# Database and Cache
+DATABASE_URL=sqlite:///./sketchdojo.db
+REDIS_URL=redis://localhost:6379/0
+EOF
+    print_warning "Created .env file with placeholder values. Please update with your actual API keys."
+fi
+
+# Set up pre-commit hooks
+print_status "Setting up pre-commit hooks..."
+pre-commit install
+
+print_status "Setup completed successfully!"
+print_status "Activate the virtual environment with: source .venv/bin/activate"
+print_status "Start the development server with: ./scripts/run.sh"

@@ -2,7 +2,6 @@
 """
 Task repository implementation using storage provider
 """
-import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional

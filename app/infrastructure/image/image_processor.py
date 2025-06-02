@@ -4,9 +4,8 @@ Image processing utilities
 """
 import logging
 import os
-from typing import Optional, Tuple
+from typing import Tuple
 
-import aiofiles
 from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
@@ -35,7 +34,7 @@ class ImageProcessor:
             # Try to load a font
             try:
                 font = ImageFont.load_default()
-            except:
+            except Exception:
                 font = None
 
             # Calculate text position
@@ -101,7 +100,11 @@ class ImageProcessor:
             raise
 
     def validate_image_dimensions(
-        self, width: int, height: int, max_width: int = 2048, max_height: int = 2048
+        self,
+        width: int,
+        height: int,
+        max_width: int = 2048,
+        max_height: int = 2048,
     ) -> Tuple[int, int]:
         """Validate and constrain image dimensions"""
         if width > max_width:
@@ -117,7 +120,10 @@ class ImageProcessor:
         return width, height
 
     async def add_watermark(
-        self, input_path: str, output_path: str, watermark_text: str = "SketchDojo"
+        self,
+        input_path: str,
+        output_path: str,
+        watermark_text: str = "SketchDojo",
     ) -> str:
         """Add watermark to image"""
         try:
@@ -129,7 +135,7 @@ class ImageProcessor:
                 # Try to load a font
                 try:
                     font = ImageFont.load_default()
-                except:
+                except Exception:
                     font = None
 
                 # Position watermark in bottom right
@@ -145,7 +151,12 @@ class ImageProcessor:
                 y = image.height - text_height - 10
 
                 # Draw watermark with transparency
-                draw.text((x, y), watermark_text, fill=(255, 255, 255, 128), font=font)
+                draw.text(
+                    (x, y),
+                    watermark_text,
+                    fill=(255, 255, 255, 128),
+                    font=font,
+                )
 
                 # Composite with original image
                 if image.mode != "RGBA":

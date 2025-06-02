@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from app.domain.entities.character import Character, CharacterAppearance
+from app.domain.entities.generation_task import GenerationTask, TaskStatus, TaskType
 from app.domain.entities.panel import Panel, SpeechBubble
 from app.domain.entities.scene import Scene
 from app.domain.entities.webtoon import Webtoon
@@ -148,7 +149,8 @@ class TestTaskRepository:
     async def test_save_and_retrieve_task(self, task_repository):
         """Test saving and retrieving task"""
         task = GenerationTask(
-            task_type=TaskType.WEBTOON_GENERATION, input_data={"prompt": "test prompt"}
+            task_type=TaskType.WEBTOON_GENERATION,
+            input_data={"prompt": "test prompt"},
         )
 
         # Save task

@@ -46,7 +46,8 @@ generation_duration = Histogram(
 
 # WebSocket metrics
 websocket_connections = Gauge(
-    "sketchdojo_websocket_connections", "Number of active WebSocket connections"
+    "sketchdojo_websocket_connections",
+    "Number of active WebSocket connections",
 )
 
 websocket_messages = Counter(

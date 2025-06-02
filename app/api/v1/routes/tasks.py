@@ -2,7 +2,6 @@
 """
 Task management API routes
 """
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -43,7 +42,8 @@ async def list_tasks(
             tasks = await repository.get_all()
 
         return TaskListResponse(
-            tasks=[TaskResponse.from_entity(t) for t in tasks], total=len(tasks)
+            tasks=[TaskResponse.from_entity(t) for t in tasks],
+            total=len(tasks),
         )
 
     except Exception as e:

@@ -1,8 +1,6 @@
 """
 Unit tests for domain entities
 """
-from datetime import datetime
-from uuid import uuid4
 
 import pytest
 
@@ -114,7 +112,8 @@ class TestGenerationTask:
     def test_create_task(self):
         """Test task creation"""
         task = GenerationTask(
-            task_type=TaskType.WEBTOON_GENERATION, input_data={"prompt": "test"}
+            task_type=TaskType.WEBTOON_GENERATION,
+            input_data={"prompt": "test"},
         )
 
         assert task.status == TaskStatus.PENDING

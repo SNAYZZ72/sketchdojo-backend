@@ -1,7 +1,6 @@
 """
 WebSocket handler for real-time chat functionality
 """
-import json
 import logging
 from datetime import UTC, datetime
 from typing import Any, Dict, List
@@ -71,14 +70,16 @@ class ChatHandler:
         room_id = self.client_rooms.get(client_id)
         if not room_id:
             await self.connection_manager.send_personal_message(
-                {"type": "error", "message": "You must join a room first"}, client_id
+                {"type": "error", "message": "You must join a room first"},
+                client_id,
             )
             return
 
         chat_text = message.get("text", "").strip()
         if not chat_text:
             await self.connection_manager.send_personal_message(
-                {"type": "error", "message": "Message text cannot be empty"}, client_id
+                {"type": "error", "message": "Message text cannot be empty"},
+                client_id,
             )
             return
 

@@ -1,15 +1,10 @@
 """
 Unit tests for application services
 """
-from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
 
 import pytest
 
-from app.application.services.generation_service import GenerationService
-from app.application.services.webtoon_service import WebtoonService
 from app.domain.entities.character import Character
-from app.domain.entities.webtoon import Webtoon
 from app.domain.value_objects.style import ArtStyle
 
 

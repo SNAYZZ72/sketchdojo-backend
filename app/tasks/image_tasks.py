@@ -30,7 +30,11 @@ def generate_single_image_task(
                 image_generator.generate_image(prompt, width, height, style)
             )
 
-            return {"success": True, "local_path": local_path, "public_url": public_url}
+            return {
+                "success": True,
+                "local_path": local_path,
+                "public_url": public_url,
+            }
         else:
             return {"success": False, "error": "Image generator not available"}
 

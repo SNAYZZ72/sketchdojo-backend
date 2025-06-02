@@ -6,7 +6,6 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-import openai
 from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -135,7 +134,10 @@ class OpenAIProvider(AIProvider):
             return []
 
     async def enhance_visual_description(
-        self, base_description: str, art_style: str, technical_specs: Dict[str, Any]
+        self,
+        base_description: str,
+        art_style: str,
+        technical_specs: Dict[str, Any],
     ) -> str:
         """Enhance a visual description for image generation"""
         try:

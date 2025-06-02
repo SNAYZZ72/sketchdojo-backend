@@ -6,7 +6,7 @@ import base64
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 import aiofiles
 import aiohttp
@@ -40,7 +40,11 @@ class StabilityProvider(ImageGenerator):
             )
 
     async def generate_image(
-        self, prompt: str, width: int = 1024, height: int = 1024, style: str = "webtoon"
+        self,
+        prompt: str,
+        width: int = 1024,
+        height: int = 1024,
+        style: str = "webtoon",
     ) -> Tuple[str, str]:
         """Generate an image from a prompt"""
         if not self.is_available():
@@ -194,7 +198,7 @@ class StabilityProvider(ImageGenerator):
             # Add text
             try:
                 font = ImageFont.load_default()
-            except:
+            except Exception:
                 font = None
 
             text_lines = [

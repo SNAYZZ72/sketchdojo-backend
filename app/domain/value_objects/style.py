@@ -4,7 +4,6 @@ Art style value object
 """
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict
 
 
 class ArtStyle(Enum):
