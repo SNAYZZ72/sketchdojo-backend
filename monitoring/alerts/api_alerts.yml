@@ -1,0 +1,58 @@
+groups:
+  - name: sketchdojo_api
+    rules:
+      - alert: HighErrorRate
+        expr: rate(sketchdojo_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} errors per second"
+
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(sketchdojo_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High response time detected"
+          description: "95th percentile response time is {{ $value }} seconds"
+
+      - alert: APIDown
+        expr: up{job="sketchdojo-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SketchDojo API is down"
+          description: "SketchDojo API has been down for more than 1 minute"
+
+      - alert: HighMemoryUsage
+        expr: (container_memory_usage_bytes / container_spec_memory_limit_bytes) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is above 80%"
+
+  - name: sketchdojo_generation
+    rules:
+      - alert: HighGenerationFailureRate
+        expr: rate(sketchdojo_generation_tasks_total{status="failed"}[10m]) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High generation failure rate"
+          description: "Generation failure rate is {{ $value }} per second"
+
+      - alert: LongGenerationTime
+        expr: histogram_quantile(0.95, rate(sketchdojo_generation_duration_seconds_bucket[10m])) > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Long generation times detected"
+          description: "95th percentile generation time is {{ $value }} seconds"

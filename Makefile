@@ -1,65 +1,50 @@
-# =============================================================================
-# Makefile
-# =============================================================================
-.PHONY: help install dev test lint format clean docker-build docker-up docker-down
+.PHONY: help install dev test lint format clean docker-build docker-up docker-down docker-logs docker-clean
 
 help: ## Show this help message
-	@echo "Available commands:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 install: ## Install dependencies
-	pip install -r requirements/dev.txt
+	pip install -r requirements/development.txt
+	pre-commit install
 
-dev: ## Install in development mode
-	pip install -e . && pre-commit install
+dev: ## Start development environment
+	./scripts/start_development.sh
 
 test: ## Run tests
-	pytest tests/ -v --cov=app --cov-report=html
-
-test-unit: ## Run unit tests only
-	pytest tests/unit/ -v
-
-test-integration: ## Run integration tests only
-	pytest tests/integration/ -v
+	./scripts/run_tests.sh
 
 lint: ## Run linting
-	black --check app/ tests/
-	isort --check-only app/ tests/
-	flake8 app/ tests/
+	flake8 app/
 	mypy app/
+	black --check app/
+	isort --check-only app/
 
 format: ## Format code
-	black app/ tests/
-	isort app/ tests/
+	black app/
+	isort app/
 
-clean: ## Clean build artifacts
-	rm -rf build/
-	rm -rf dist/
-	rm -rf *.egg-info
-	rm -rf .pytest_cache/
-	rm -rf .coverage
-	rm -rf htmlcov/
-	find . -type d -name __pycache__ -delete
+clean: ## Clean up temporary files
 	find . -type f -name "*.pyc" -delete
+	find . -type d -name "__pycache__" -delete
+	find . -type d -name "*.egg-info" -exec rm -rf {} +
+	rm -rf .coverage htmlcov/ .pytest_cache/ .mypy_cache/
 
 docker-build: ## Build Docker images
-	docker build -t sketchdojo/api:latest -f docker/Dockerfile .
+	docker build -f docker/Dockerfile.api -t sketchdojo-api:latest .
+	docker build -f docker/Dockerfile.worker -t sketchdojo-worker:latest .
 
-docker-up: ## Start development environment
-	docker-compose -f docker/docker-compose.dev.yml up -d
+docker-up: ## Start Docker services
+	docker-compose -f docker/docker-compose.yml up -d
 
-docker-down: ## Stop development environment
-	docker-compose -f docker/docker-compose.dev.yml down
+docker-down: ## Stop Docker services
+	docker-compose -f docker/docker-compose.yml down
 
-docker-logs: ## View logs
-	docker-compose -f docker/docker-compose.dev.yml logs -f
+docker-logs: ## Show Docker logs
+	docker-compose -f docker/docker-compose.yml logs -f
 
-deploy-dev: ## Deploy to development
-	./scripts/deploy.sh development
-
-deploy-prod: ## Deploy to production
-	./scripts/deploy.sh production
-
-init-db: ## Initialize database
-	python scripts/init_db.py
-
+docker-clean: ## Clean Docker resources
+	docker-compose -f docker/docker-compose.yml down -v
+	docker system prune -f

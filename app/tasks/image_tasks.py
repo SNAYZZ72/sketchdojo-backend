@@ -1,124 +1,64 @@
-# =============================================================================
 # app/tasks/image_tasks.py
-# =============================================================================
-import asyncio
+"""
+Background tasks for image processing
+"""
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict
 
-from celery import current_task
-
-from app.core.celery_app import celery_app
-from app.core.config import settings
-from app.domain.models.task import TaskStatus
-from app.infrastructure.ai import OpenAIClient, PanelProcessor, StabilityAIGenerator
+from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(bind=True, name="generate_panel_image")
-def generate_panel_image(
-    self,
-    user_id: str,
-    visual_prompt: str,
-    style: str = "webtoon",
-    quality: str = "standard",
-    width: int = 1024,
-    height: int = 1024,
+@celery_app.task
+def generate_single_image_task(
+    prompt: str, style: str, width: int = 1024, height: int = 1024
 ) -> Dict[str, Any]:
-    """Generate panel image from visual prompt."""
+    """Background task for single image generation"""
+    logger.info(f"Generating single image: {prompt[:50]}...")
+
     try:
-        self.update_state(
-            state=TaskStatus.RUNNING.value,
-            meta={"progress": 10, "current_step": "Initializing image generation"},
-        )
+        # Import here to avoid circular imports
+        import asyncio
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        from app.dependencies import get_image_generator
 
-        try:
-            # Initialize AI clients
-            llm_client = OpenAIClient(
-                api_key=settings.openai_api_key, model=settings.default_llm_model
+        image_generator = get_image_generator()
+
+        if image_generator.is_available():
+            local_path, public_url = asyncio.run(
+                image_generator.generate_image(prompt, width, height, style)
             )
 
-            image_generator = StabilityAIGenerator(api_key=settings.stability_ai_api_key)
-
-            panel_processor = PanelProcessor(llm_client, image_generator)
-
-            # Generate image
-            self.update_state(
-                state=TaskStatus.RUNNING.value,
-                meta={"progress": 50, "current_step": "Generating image"},
-            )
-
-            result = loop.run_until_complete(
-                panel_processor.generate_panel_image(visual_prompt, style, quality, width, height)
-            )
-
-            self.update_state(
-                state=TaskStatus.COMPLETED.value,
-                meta={"progress": 100, "current_step": "Completed", "result": result},
-            )
-
-            return result
-
-        finally:
-            loop.close()
+            return {"success": True, "local_path": local_path, "public_url": public_url}
+        else:
+            return {"success": False, "error": "Image generator not available"}
 
     except Exception as e:
-        logger.error(f"Image generation failed: {str(e)}")
-        self.update_state(state=TaskStatus.FAILED.value, meta={"error": str(e), "progress": 0})
-        raise
+        logger.error(f"Error generating image: {str(e)}")
+        return {"success": False, "error": str(e)}
 
 
-@celery_app.task(bind=True, name="generate_visual_prompt")
-def generate_visual_prompt(
-    self,
-    user_id: str,
-    scene_description: Dict[str, Any],
-    characters: List[Dict[str, Any]],
-    style: str = "webtoon",
-) -> str:
-    """Generate visual prompt for image generation."""
-    try:
-        self.update_state(
-            state=TaskStatus.RUNNING.value, meta={"progress": 10, "current_step": "Analyzing scene"}
+@celery_app.task
+def process_image_batch(image_requests: list) -> Dict[str, Any]:
+    """Process multiple images in batch"""
+    logger.info(f"Processing image batch of {len(image_requests)} images")
+
+    results = []
+    for request in image_requests:
+        result = generate_single_image_task.apply(
+            args=[
+                request.get("prompt"),
+                request.get("style", "webtoon"),
+                request.get("width", 1024),
+                request.get("height", 1024),
+            ]
         )
+        results.append(result.get())
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        try:
-            # Initialize AI clients
-            llm_client = OpenAIClient(
-                api_key=settings.openai_api_key, model=settings.default_llm_model
-            )
-
-            image_generator = StabilityAIGenerator(api_key=settings.stability_ai_api_key)
-
-            panel_processor = PanelProcessor(llm_client, image_generator)
-
-            # Generate visual prompt
-            self.update_state(
-                state=TaskStatus.RUNNING.value,
-                meta={"progress": 50, "current_step": "Creating visual prompt"},
-            )
-
-            result = loop.run_until_complete(
-                panel_processor.generate_visual_prompt(scene_description, characters, style)
-            )
-
-            self.update_state(
-                state=TaskStatus.COMPLETED.value,
-                meta={"progress": 100, "current_step": "Completed", "result": result},
-            )
-
-            return result
-
-        finally:
-            loop.close()
-
-    except Exception as e:
-        logger.error(f"Visual prompt generation failed: {str(e)}")
-        self.update_state(state=TaskStatus.FAILED.value, meta={"error": str(e), "progress": 0})
-        raise
+    return {
+        "total_images": len(image_requests),
+        "successful": len([r for r in results if r.get("success")]),
+        "failed": len([r for r in results if not r.get("success")]),
+        "results": results,
+    }

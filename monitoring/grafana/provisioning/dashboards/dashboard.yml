@@ -1,0 +1,13 @@
+# monitoring/grafana/provisioning/dashboards/dashboard.yml (Complete)
+apiVersion: 1
+
+providers:
+  - name: 'sketchdojo'
+    orgId: 1
+    folder: 'SketchDojo'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

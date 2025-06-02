@@ -1,0 +1,68 @@
+# Main requirements file for SketchDojo Backend
+#
+# For development, use: pip install -r requirements/development.txt
+# For production, use: pip install -r requirements/production.txt
+#
+# This file is a convenience that combines all requirements for local development.
+
+# Base requirements
+-r requirements/base.txt
+
+# Development requirements
+-r requirements/development.txt
+
+# Production requirements (commented out by default)
+# -r requirements/production.txt
+
+# Additional dependencies that might be needed for specific features
+# Uncomment as needed
+# stability-sdk>=0.5.0  # For Stability AI integration
+# boto3>=1.28.0  # For AWS S3 storage
+# google-cloud-storage>=2.10.0  # For Google Cloud Storage
+# azure-storage-blob>=12.16.0  # For Azure Blob Storage
+
+# For deployment and containerization
+docker>=6.1.3
+python-dotenv>=1.0.0
+
+# For API documentation
+git+https://github.com/tiangolo/fastapi-cli.git@0.0.3  # For FastAPI CLI
+
+# For testing (already included in development.txt, but listed here for clarity)
+# -r requirements/development.txt
+
+# For monitoring (already included in base.txt, but listed here for clarity)
+# prometheus-client>=0.19.0
+# structlog>=23.2.0
+
+# For WebSocket support (already included in base.txt, but listed here for clarity)
+# websockets>=12.0
+
+# For async database access (if needed)
+# asyncpg>=0.28.0
+# databases[postgresql]>=0.7.0
+
+# For security
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# For image processing (already included in base.txt, but listed here for clarity)
+# pillow>=10.1.0
+
+# For HTTP client (already included in base.txt, but listed here for clarity)
+# httpx>=0.25.2
+
+# For task queue (already included in base.txt, but listed here for clarity)
+# celery[redis]>=5.3.4
+
+# For Redis (already included in base.txt, but listed here for clarity)
+# redis>=5.0.1
+
+# For OpenAI (already included in base.txt, but listed here for clarity)
+# openai>=1.3.7
+
+# For async file operations (already included in base.txt, but listed here for clarity)
+# aiofiles>=23.2.1
+
+# For retrying operations (already included in base.txt, but listed here for clarity)
+# tenacity>=8.2.3

@@ -1,0 +1,31 @@
+name: Deploy
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.ref_type == 'tag'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Get version
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Build and tag images
+      run: |
+        docker build -f docker/Dockerfile.api -t sketchdojo-api:${{ steps.get_version.outputs.VERSION }} .
+        docker build -f docker/Dockerfile.worker -t sketchdojo-worker:${{ steps.get_version.outputs.VERSION }} .
+
+    # Add your registry push logic here
+    # - name: Push to registry
+    #   run: |
+    #     echo "Push images to your container registry"
