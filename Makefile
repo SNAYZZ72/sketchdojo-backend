@@ -1,4 +1,4 @@
-.PHONY: help install dev test lint format clean docker-build docker-up docker-down docker-logs docker-clean
+.PHONY: help install dev test lint format clean docker-build docker-up docker-down docker-logs docker-clean docker-test docker-monitor docker-restart
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -33,8 +33,7 @@ clean: ## Clean up temporary files
 	rm -rf .coverage htmlcov/ .pytest_cache/ .mypy_cache/
 
 docker-build: ## Build Docker images
-	docker build -f docker/Dockerfile.api -t sketchdojo-api:latest .
-	docker build -f docker/Dockerfile.worker -t sketchdojo-worker:latest .
+	docker-compose -f docker/docker-compose.yml build
 
 docker-up: ## Start Docker services
 	docker-compose -f docker/docker-compose.yml up -d
@@ -46,5 +45,14 @@ docker-logs: ## Show Docker logs
 	docker-compose -f docker/docker-compose.yml logs -f
 
 docker-clean: ## Clean Docker resources
-	docker-compose -f docker/docker-compose.yml down -v
+	docker-compose -f docker/docker-compose.yml down -v --remove-orphans
 	docker system prune -f
+
+docker-test: ## Run tests in Docker
+	docker exec docker-backend-1 pytest -xvs tests/
+
+docker-monitor: ## Start monitoring stack only
+	docker-compose -f docker/docker-compose.yml up -d redis prometheus grafana redis-exporter
+
+docker-restart: ## Restart a specific service
+	docker-compose -f docker/docker-compose.yml restart $(service)

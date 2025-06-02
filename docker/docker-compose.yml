@@ -8,6 +8,9 @@ services:
     volumes:
       - ../storage:/app/storage
       - ../logs:/app/logs
+    container_name: backend
+    networks:
+      - monitoring-network
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=sqlite:///./sketchdojo.db
@@ -32,6 +35,8 @@ services:
     volumes:
       - redis_data:/data
     restart: unless-stopped
+    networks:
+      - monitoring-network
 
   # Prometheus for metrics collection
   prometheus:
@@ -48,6 +53,8 @@ services:
       - '--web.enable-lifecycle'
     ports:
       - "9090:9090"
+    networks:
+      - monitoring-network
     restart: unless-stopped
 
   # Redis exporter for Redis metrics
@@ -60,6 +67,8 @@ services:
     depends_on:
       - redis
     restart: unless-stopped
+    networks:
+      - monitoring-network
 
   # Grafana for metrics visualization
   grafana:
@@ -79,8 +88,14 @@ services:
       - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
       - GF_SERVER_ROOT_URL=http://localhost:3000
     restart: unless-stopped
+    networks:
+      - monitoring-network
 
 volumes:
   redis_data:
   prometheus_data:
   grafana_data:
+
+networks:
+  monitoring-network:
+    driver: bridge

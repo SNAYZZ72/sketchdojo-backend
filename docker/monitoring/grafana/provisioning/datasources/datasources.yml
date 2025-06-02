@@ -8,3 +8,10 @@ datasources:
     isDefault: true
     editable: true
     version: 1
+    uid: prometheus  # Make sure this UID is consistent
+    jsonData:
+      httpMethod: GET
+      manageAlerts: true
+      prometheusType: Prometheus
+      prometheusVersion: 2.40.0
+    secureJsonData: {}

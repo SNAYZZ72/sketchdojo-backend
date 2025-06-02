@@ -1,0 +1,6 @@
+apiVersion: 1
+
+# Disable alerting provisioning for now
+# alertRuleConfig: []
+# contactPoints: []
+# policies: []
