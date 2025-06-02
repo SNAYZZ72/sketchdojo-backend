@@ -1,44 +1,12 @@
+version: '3.8'
+
 services:
-  backend:
-    build:
-      context: ..
-      dockerfile: ./docker/Dockerfile
-    ports:
-      - "8000:8000"
-    volumes:
-      - ../storage:/app/storage
-      - ../logs:/app/logs
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=sqlite:///./sketchdojo.db
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - STABILITY_API_KEY=${STABILITY_API_KEY}
-      - ENVIRONMENT=development
-      - DEBUG=true
-      - SKETCHDOJO_SETTINGS_MODULE=docker.docker-settings
-      # JWT authentication settings
-      - SECRET_KEY=${SECRET_KEY:-development_secret_key}
-      - JWT_SECRET=${JWT_SECRET:-development_jwt_secret}
-      - JWT_ALGORITHM=HS256
-      - JWT_EXPIRATION=1440  # 24 hours in minutes
-    depends_on:
-      - redis
-    restart: unless-stopped
-
-  redis:
-    image: redis:alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    restart: unless-stopped
-
   # Prometheus for metrics collection
   prometheus:
     image: prom/prometheus:latest
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./monitoring/alerts:/etc/prometheus/alerts
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ../monitoring/alerts:/etc/prometheus/alerts
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -57,8 +25,6 @@ services:
       - REDIS_ADDR=redis://redis:6379
     ports:
       - "9121:9121"
-    depends_on:
-      - redis
     restart: unless-stopped
 
   # Grafana for metrics visualization
@@ -69,8 +35,8 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ../monitoring/grafana/dashboards:/etc/grafana/dashboards
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning
       - grafana_data:/var/lib/grafana
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
@@ -81,6 +47,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  redis_data:
   prometheus_data:
   grafana_data:

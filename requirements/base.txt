@@ -16,3 +16,4 @@ structlog==23.2.0
 websockets==12.0
 tenacity==8.2.3
 passlib[bcrypt]==1.7.4
+aiohttp==3.9.1
