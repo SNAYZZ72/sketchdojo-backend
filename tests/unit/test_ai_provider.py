@@ -21,7 +21,6 @@ class TestOpenAIProvider:
     @pytest.fixture
     def mock_openai_response(self):
         """Mock OpenAI API response"""
-        mock_response = AsyncMock()
         mock_choice = AsyncMock()
         mock_message = AsyncMock()
         mock_message.content = json.dumps(
@@ -42,16 +41,21 @@ class TestOpenAIProvider:
             }
         )
         mock_choice.message = mock_message
+        mock_response = AsyncMock()
         mock_response.choices = [mock_choice]
         return mock_response
 
     @pytest.mark.asyncio
     async def test_generate_story(self, ai_provider, mock_openai_response):
         """Test story generation"""
+        # Configure AsyncMock to be awaitable
+        mock_create = AsyncMock()
+        mock_create.return_value = mock_openai_response
+        
         with patch.object(
             ai_provider.client.chat.completions,
             "create",
-            return_value=mock_openai_response,
+            return_value=mock_create(),
         ):
             story = await ai_provider.generate_story(
                 "A brave hero saves the world", "fantasy"
@@ -71,7 +75,7 @@ class TestOpenAIProvider:
             "key_scenes": ["Opening scene"],
         }
 
-        mock_response = AsyncMock()
+        # Create mock response objects
         mock_choice = AsyncMock()
         mock_message = AsyncMock()
         mock_message.content = json.dumps(
@@ -93,10 +97,15 @@ class TestOpenAIProvider:
             }
         )
         mock_choice.message = mock_message
+        mock_response = AsyncMock()
         mock_response.choices = [mock_choice]
+        
+        # Configure AsyncMock to be awaitable
+        mock_create = AsyncMock()
+        mock_create.return_value = mock_response
 
         with patch.object(
-            ai_provider.client.chat.completions, "create", return_value=mock_response
+            ai_provider.client.chat.completions, "create", return_value=mock_create()
         ):
             scenes = await ai_provider.generate_scene_descriptions(story, 1)
 
