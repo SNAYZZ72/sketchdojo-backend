@@ -11,6 +11,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from app.websocket.connection_manager import get_connection_manager
 from app.websocket.handlers.chat_handler import get_chat_handler
+from app.websocket.handlers.tool_handler import get_tool_handler
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,10 @@ async def websocket_endpoint(websocket: WebSocket):
     client_id = str(uuid4())
     connection_manager = get_connection_manager()
     chat_handler = get_chat_handler()
+    tool_handler = get_tool_handler()
+    
+    # Grant default tool permissions to new clients
+    tool_handler.grant_permissions(client_id, ["echo", "weather"])
 
     try:
         await connection_manager.connect(websocket, client_id)
@@ -103,6 +108,10 @@ async def handle_websocket_message(
 
     elif message_type == "typing_indicator":
         await chat_handler.handle_typing_indicator(client_id, message)
+        
+    # Tool-related messages
+    elif message_type == "tool_discovery":
+        await chat_handler.handle_tool_discovery(client_id, message)
 
     # Utility messages
     elif message_type == "ping":

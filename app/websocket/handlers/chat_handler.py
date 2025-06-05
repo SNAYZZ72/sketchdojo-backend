@@ -3,10 +3,12 @@ WebSocket handler for real-time chat functionality
 """
 import logging
 from datetime import UTC, datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from app.websocket.connection_manager import get_connection_manager
+from app.websocket.handlers.tool_handler import get_tool_handler
+
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +85,13 @@ class ChatHandler:
             )
             return
 
+        # Generate a message ID for tracking
+        message_id = str(uuid4())
+        
+        # Check for tool calls in the message
+        tool_calls = message.get("tool_calls", [])
+        has_tool_calls = len(tool_calls) > 0
+        
         # Create chat message
         chat_message = {
             "type": "chat_message",
@@ -90,7 +99,8 @@ class ChatHandler:
             "client_id": client_id,
             "text": chat_text,
             "timestamp": datetime.now(UTC).isoformat(),
-            "message_id": str(uuid4()),
+            "message_id": message_id,
+            "has_tool_calls": has_tool_calls
         }
 
         # Broadcast to all room participants
@@ -99,6 +109,10 @@ class ChatHandler:
         logger.debug(
             f"Chat message from {client_id} in room {room_id}: {chat_text[:50]}"
         )
+        
+        # Process any tool calls
+        if has_tool_calls:
+            await self._process_tool_calls(client_id, room_id, message_id, tool_calls)
 
     async def handle_typing_indicator(self, client_id: str, message: Dict[str, Any]):
         """Handle typing indicator"""
@@ -122,6 +136,10 @@ class ChatHandler:
     async def handle_client_disconnect(self, client_id: str):
         """Handle client disconnection"""
         await self._leave_current_room(client_id)
+        
+        # Notify the tool handler about the disconnect
+        tool_handler = get_tool_handler()
+        await tool_handler.handle_client_disconnect(client_id)
 
     async def _leave_current_room(self, client_id: str):
         """Remove client from their current room"""
@@ -186,6 +204,66 @@ class ChatHandler:
             "current_room": room_id,
             "in_room": room_id is not None,
         }
+        
+    async def handle_tool_discovery(self, client_id: str, message: Dict[str, Any] = None):
+        """Handle tool discovery request"""
+        tool_handler = get_tool_handler()
+        await tool_handler.handle_tool_discovery(client_id)
+    
+    async def _process_tool_calls(
+        self, client_id: str, room_id: str, message_id: str, tool_calls: List[Dict[str, Any]]
+    ):
+        """Process tool calls within a message"""
+        tool_handler = get_tool_handler()
+        
+        for i, tool_call in enumerate(tool_calls):
+            tool_id = tool_call.get("tool_id")
+            parameters = tool_call.get("parameters", {})
+            
+            if not tool_id:
+                await self._send_tool_call_error(
+                    client_id, 
+                    room_id,
+                    message_id,
+                    i,
+                    "missing_tool_id", 
+                    "Tool ID is required"
+                )
+                continue
+            
+            # Generate a unique call ID for this specific tool call
+            call_id = str(uuid4())
+            
+            # Forward the tool call to the tool handler
+            await tool_handler.handle_tool_call(client_id, {
+                "tool_id": tool_id,
+                "call_id": call_id,
+                "message_id": message_id,
+                "parameters": parameters
+            })
+    
+    async def _send_tool_call_error(
+        self, 
+        client_id: str, 
+        room_id: str,
+        message_id: str,
+        call_index: int,
+        error_code: str, 
+        error_message: str
+    ):
+        """Send tool call error to client"""
+        tool_error = {
+            "type": "tool_call_error",
+            "message_id": message_id,
+            "call_index": call_index,
+            "error_code": error_code,
+            "error_message": error_message,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        
+        await self.connection_manager.send_personal_message(tool_error, client_id)
+        
+        logger.error(f"Tool call error for client {client_id}: {error_code} - {error_message}")
 
 
 # Global chat handler instance

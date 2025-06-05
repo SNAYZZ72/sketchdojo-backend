@@ -134,3 +134,135 @@ class PanelGeneratedEvent(WebSocketEvent):
             image_url=image_url,
             sequence_number=sequence_number,
         )
+
+
+@dataclass
+class ToolDiscoveryEvent(WebSocketEvent):
+    """Tool discovery event with available tools"""
+
+    client_id: str
+    tools: list
+
+    @classmethod
+    def create(cls, client_id: str, tools: list):
+        return cls(
+            event_type="tool_discovery",
+            timestamp=datetime.now(UTC),
+            data={
+                "client_id": client_id,
+                "tools": tools,
+            },
+            client_id=client_id,
+            tools=tools,
+        )
+
+
+@dataclass
+class ToolCallEvent(WebSocketEvent):
+    """Tool call event for executing a tool"""
+
+    client_id: str
+    tool_id: str
+    call_id: str
+    message_id: Optional[str]
+    parameters: Dict[str, Any]
+
+    @classmethod
+    def create(
+        cls,
+        client_id: str,
+        tool_id: str,
+        call_id: str,
+        parameters: Dict[str, Any],
+        message_id: Optional[str] = None,
+    ):
+        return cls(
+            event_type="tool_call",
+            timestamp=datetime.now(UTC),
+            data={
+                "client_id": client_id,
+                "tool_id": tool_id,
+                "call_id": call_id,
+                "message_id": message_id,
+                "parameters": parameters,
+            },
+            client_id=client_id,
+            tool_id=tool_id,
+            call_id=call_id,
+            message_id=message_id,
+            parameters=parameters,
+        )
+
+
+@dataclass
+class ToolCallResultEvent(WebSocketEvent):
+    """Tool call result event with execution results"""
+
+    client_id: str
+    tool_id: str
+    call_id: str
+    message_id: Optional[str]
+    result: Any
+
+    @classmethod
+    def create(
+        cls,
+        client_id: str,
+        tool_id: str,
+        call_id: str,
+        result: Any,
+        message_id: Optional[str] = None,
+    ):
+        return cls(
+            event_type="tool_call_result",
+            timestamp=datetime.now(UTC),
+            data={
+                "client_id": client_id,
+                "tool_id": tool_id,
+                "call_id": call_id,
+                "message_id": message_id,
+                "result": result,
+            },
+            client_id=client_id,
+            tool_id=tool_id,
+            call_id=call_id,
+            message_id=message_id,
+            result=result,
+        )
+
+
+@dataclass
+class ToolCallErrorEvent(WebSocketEvent):
+    """Tool call error event"""
+
+    client_id: str
+    message_id: Optional[str]
+    call_index: Optional[int]
+    error_code: str
+    error_message: str
+
+    @classmethod
+    def create(
+        cls,
+        client_id: str,
+        error_code: str,
+        error_message: str,
+        message_id: Optional[str] = None,
+        call_index: Optional[int] = None,
+    ):
+        return cls(
+            event_type="tool_call_error",
+            timestamp=datetime.now(UTC),
+            data={
+                "client_id": client_id,
+                "message_id": message_id,
+                "call_index": call_index,
+                "error_code": error_code,
+                "error_message": error_message,
+            },
+            client_id=client_id,
+            message_id=message_id,
+            call_index=call_index,
+            error_code=error_code,
+            error_message=error_message,
+        )
