@@ -2,8 +2,11 @@
 """
 Generation API routes
 """
+import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+
+logger = logging.getLogger(__name__)
 
 from app.application.services.generation_service import GenerationService
 from app.dependencies import get_generation_service
@@ -12,7 +15,6 @@ from app.schemas.generation_schemas import (
     GenerationResponse,
     PanelGenerationRequest,
 )
-from app.tasks.generation_tasks import start_webtoon_generation_task
 
 router = APIRouter()
 
@@ -40,12 +42,43 @@ async def generate_webtoon(
         # Start generation task
         result_dto = await service.start_webtoon_generation(request_dto)
 
-        # Add background task for actual generation
-        background_tasks.add_task(
-            start_webtoon_generation_task,
-            str(result_dto.task_id),
-            request_dto.dict(),
-        )
+        # Submit task to Celery for async processing using explicit task name
+        from app.tasks.celery_app import celery_app
+        logger.debug(f"Submitting task with task_id: {result_dto.task_id}")
+        
+        try:
+            # Convert DTO to dict and ensure all data is JSON serializable
+            request_dict = request_dto.dict()
+            logger.debug(f"Request dict before serialization: {request_dict}")
+            
+            # Handle enums and other non-serializable objects
+            if 'art_style' in request_dict:
+                request_dict['art_style'] = request_dict['art_style'].value if hasattr(request_dict['art_style'], 'value') else str(request_dict['art_style'])
+            
+            # Ensure all values in style_preferences are serializable
+            if 'style_preferences' in request_dict and request_dict['style_preferences']:
+                for key, value in request_dict['style_preferences'].items():
+                    if hasattr(value, 'value'):  # Handle potential enums in style preferences
+                        request_dict['style_preferences'][key] = value.value
+                    elif hasattr(value, '__dict__'):  # Handle custom objects
+                        request_dict['style_preferences'][key] = str(value)
+            
+            # For safety, convert any remaining non-serializable objects to strings
+            for key, value in request_dict.items():
+                if hasattr(value, '__dict__') and not isinstance(value, (dict, list, str, int, float, bool, type(None))):
+                    request_dict[key] = str(value)
+            
+            logger.debug(f"Serialized request dict: {request_dict}")
+            
+            # Send the task to Celery
+            celery_app.send_task(
+                'app.tasks.generation_tasks.start_webtoon_generation_task',
+                args=[str(result_dto.task_id), request_dict],
+                queue='celery'  # Ensure the task is sent to the default queue
+            )
+        except Exception as e:
+            logger.exception(f"Error sending task to Celery: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to schedule generation task: {str(e)}")
 
         return GenerationResponse(
             task_id=result_dto.task_id,
