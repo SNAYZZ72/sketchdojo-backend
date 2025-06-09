@@ -10,7 +10,7 @@ from fastapi import FastAPI, Response
 from app.api.middleware.cors import setup_cors
 from app.api.middleware.logging import LoggingMiddleware
 from app.api.middleware.metrics import MetricsMiddleware
-from app.api.v1.routes import generation, health, tasks, webtoons
+from app.api.v1.routes import generation, health, tasks, webtoons, test
 from app.config import get_settings
 from app.monitoring.logging_config import setup_logging
 from app.monitoring.metrics import get_metrics, get_metrics_content_type, setup_metrics
@@ -79,6 +79,7 @@ def create_app() -> FastAPI:
         tasks.router, prefix=f"{settings.api_prefix}/tasks", tags=["tasks"]
     )
     app.include_router(health.router, prefix="/health", tags=["health"])
+    app.include_router(test.router, prefix=f"{settings.api_prefix}/test", tags=["test"])
 
     # Metrics endpoint
     @app.get("/metrics")

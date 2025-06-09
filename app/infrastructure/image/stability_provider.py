@@ -118,7 +118,8 @@ class StabilityProvider(ImageGenerator):
 
     def is_available(self) -> bool:
         """Check if the image generator is available"""
-        return self.api_key is not None
+        # Force using placeholder images for testing
+        return False  # Previously: return self.api_key is not None
 
     def _get_style_modifiers(self, style: str) -> str:
         """Get style-specific modifiers for prompts"""

@@ -59,8 +59,7 @@ class GenerationService:
 
         await self.task_repository.save(task)
 
-        # Start background generation (in real implementation, this would be a Celery task)
-        # For now, we'll simulate the process
+        # Task will be submitted to Celery for async processing by the API endpoint
 
         return GenerationResultDTO(
             task_id=task.id,

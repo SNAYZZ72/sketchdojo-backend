@@ -13,6 +13,8 @@ services:
       - monitoring-network
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
       - DATABASE_URL=sqlite:///./sketchdojo.db
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - STABILITY_API_KEY=${STABILITY_API_KEY}
@@ -26,6 +28,34 @@ services:
       - JWT_EXPIRATION=1440  # 24 hours in minutes
     depends_on:
       - redis
+    restart: unless-stopped
+    
+  celery-worker:
+    build:
+      context: ..
+      dockerfile: ./docker/Dockerfile
+    command: celery -A app.tasks.celery_app worker --loglevel=debug
+    volumes:
+      - ../storage:/app/storage
+      - ../logs:/app/logs
+    container_name: celery-worker
+    networks:
+      - monitoring-network
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - DATABASE_URL=sqlite:///./sketchdojo.db
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - STABILITY_API_KEY=${STABILITY_API_KEY}
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - SKETCHDOJO_SETTINGS_MODULE=docker.docker-settings
+      - SECRET_KEY=${SECRET_KEY:-development_secret_key}
+      - JWT_SECRET=${JWT_SECRET:-development_jwt_secret}
+    depends_on:
+      - redis
+      - backend
     restart: unless-stopped
 
   redis:
