@@ -3,78 +3,78 @@
 Art style value object
 """
 from dataclasses import dataclass
-from enum import Enum
 
+# Import from centralized constants file
+from app.domain.constants.art_styles import (
+    ArtStyle as ArtStyleLiteral,  # Import the Literal as a different name
+    ArtStyleEnum,
+    ensure_art_style_string
+)
 
-class ArtStyle(Enum):
-    """Available art styles for webtoon generation"""
+# Note: All ArtStyle definitions have been moved to app/domain/constants/art_styles.py
+# This file now imports those definitions for backward compatibility
 
-    MANGA = "manga"
-    WEBTOON = "webtoon"
-    COMIC = "comic"
-    ANIME = "anime"
-    REALISTIC = "realistic"
-    SKETCH = "sketch"
-    CHIBI = "chibi"
+# Re-export ArtStyleEnum as ArtStyle to maintain backward compatibility with existing code
+ArtStyle = ArtStyleEnum  # This makes ArtStyle.WEBTOON work again
 
 
 @dataclass(frozen=True)
 class StyleConfiguration:
     """Configuration for a specific art style"""
 
-    style: ArtStyle
+    style: str
     color_palette: str
     line_weight: str
     shading_style: str
     composition_notes: str
 
     @classmethod
-    def for_style(cls, style: ArtStyle) -> "StyleConfiguration":
+    def for_style(cls, style: str) -> "StyleConfiguration":
         """Get default configuration for a style"""
         configs = {
-            ArtStyle.MANGA: cls(
+            "manga": cls(
                 style=style,
                 color_palette="black_and_white",
                 line_weight="bold",
                 shading_style="screentone",
                 composition_notes="Dynamic panels with action lines",
             ),
-            ArtStyle.WEBTOON: cls(
+            "webtoon": cls(
                 style=style,
                 color_palette="full_color",
                 line_weight="clean",
                 shading_style="soft_cell",
                 composition_notes="Vertical scrolling optimized panels",
             ),
-            ArtStyle.COMIC: cls(
+            "comic": cls(
+                style=style,
+                color_palette="primary_colors",
+                line_weight="variable",
+                shading_style="hatching",
+                composition_notes="Traditional comic book panel layout",
+            ),
+            "anime": cls(
                 style=style,
                 color_palette="vibrant",
-                line_weight="bold",
-                shading_style="flat_colors",
-                composition_notes="Traditional comic book layout",
+                line_weight="crisp",
+                shading_style="cel",
+                composition_notes="Expressive character close-ups",
             ),
-            ArtStyle.ANIME: cls(
-                style=style,
-                color_palette="bright",
-                line_weight="clean",
-                shading_style="cel_shading",
-                composition_notes="Anime-style expressions and effects",
-            ),
-            ArtStyle.REALISTIC: cls(
+            "realistic": cls(
                 style=style,
                 color_palette="natural",
-                line_weight="varied",
+                line_weight="subtle",
                 shading_style="realistic",
-                composition_notes="Photorealistic rendering",
+                composition_notes="Cinematic framing and lighting",
             ),
-            ArtStyle.SKETCH: cls(
+            "sketch": cls(
                 style=style,
                 color_palette="monochrome",
                 line_weight="loose",
                 shading_style="crosshatch",
                 composition_notes="Hand-drawn sketch appearance",
             ),
-            ArtStyle.CHIBI: cls(
+            "chibi": cls(
                 style=style,
                 color_palette="pastel",
                 line_weight="soft",
@@ -82,8 +82,8 @@ class StyleConfiguration:
                 composition_notes="Cute, simplified character designs",
             ),
         }
-        return configs.get(style, configs[ArtStyle.WEBTOON])
+        return configs.get(style.lower(), configs["webtoon"])
 
     def to_prompt_text(self) -> str:
         """Convert style configuration to AI prompt text"""
-        return f"{self.style.value} style, {self.color_palette} palette, {self.line_weight} lines, {self.shading_style} shading, {self.composition_notes}"
+        return f"{self.style} style, {self.color_palette} palette, {self.line_weight} lines, {self.shading_style} shading, {self.composition_notes}"

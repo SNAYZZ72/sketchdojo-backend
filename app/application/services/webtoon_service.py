@@ -22,10 +22,8 @@ class WebtoonService:
         self, title: str, description: str, art_style: str
     ) -> WebtoonDTO:
         """Create a new webtoon"""
-        from app.domain.value_objects.style import ArtStyle
-
-        webtoon = Webtoon(
-            title=title, description=description, art_style=ArtStyle(art_style)
+        webtoon = self.repository.create_webtoon(
+            title=title, description=description, art_style=art_style
         )
 
         saved_webtoon = await self.repository.save(webtoon)

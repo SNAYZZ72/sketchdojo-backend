@@ -5,16 +5,22 @@ Generation-related API schemas
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, field_validator
 
-from app.domain.value_objects.style import ArtStyle
+# Import centralized ArtStyle definitions
+from app.domain.constants.art_styles import VALID_ART_STYLES
 
 
 class GenerationRequest(BaseModel):
     """Request to generate a webtoon"""
 
     prompt: str = Field(..., min_length=10, max_length=2000, description="Story prompt")
-    art_style: str = Field(default="webtoon", description="Art style")
+    art_style: str = Field(
+        default="webtoon", 
+        description="Art style",
+        # Generate pattern from centralized VALID_ART_STYLES list
+        pattern=f"^({'|'.join(VALID_ART_STYLES)})$"
+    )
     num_panels: int = Field(default=6, ge=1, le=20, description="Number of panels")
     character_descriptions: Optional[List[str]] = Field(
         default=None, description="Optional character descriptions"
@@ -25,17 +31,6 @@ class GenerationRequest(BaseModel):
     style_preferences: Optional[Dict[str, Any]] = Field(
         default=None, description="Style preferences"
     )
-    
-    @validator('art_style')
-    def validate_art_style(cls, v):
-        if isinstance(v, ArtStyle):
-            return v.value
-        try:
-            # Validate it's a valid art style
-            return ArtStyle(v).value
-        except ValueError:
-            valid_styles = [s.value for s in ArtStyle]
-            raise ValueError(f"Invalid art style. Must be one of: {', '.join(valid_styles)}")
 
 
 class PanelGenerationRequest(BaseModel):
@@ -43,7 +38,11 @@ class PanelGenerationRequest(BaseModel):
 
     scene_description: str = Field(..., min_length=10, max_length=1000)
     character_names: List[str] = Field(default_factory=list)
-    art_style: str = Field(default="webtoon")
+    art_style: str = Field(
+        default="webtoon",
+        # Generate pattern from centralized VALID_ART_STYLES list
+        pattern=f"^({'|'.join(VALID_ART_STYLES)})$"
+    )
     panel_size: str = Field(default="full", pattern="^(full|half|third|quarter)$")
     mood: Optional[str] = Field(default=None, max_length=100)
     prompt: Optional[str] = Field(
@@ -56,16 +55,12 @@ class PanelGenerationRequest(BaseModel):
         default=None, description="Style preferences for generation"
     )
     
-    @validator('art_style')
+    @field_validator('art_style')
     def validate_art_style(cls, v):
-        if isinstance(v, ArtStyle):
-            return v.value
-        try:
-            # Validate it's a valid art style
-            return ArtStyle(v).value
-        except ValueError:
-            valid_styles = [s.value for s in ArtStyle]
-            raise ValueError(f"Invalid art style. Must be one of: {', '.join(valid_styles)}")
+        """Validate that the art style is one of the valid options"""
+        if v.lower() not in [s.lower() for s in VALID_ART_STYLES]:
+            raise ValueError(f"Invalid art style: {v}. Must be one of {VALID_ART_STYLES}")
+        return v.lower()
 
 
 class GenerationResponse(BaseModel):

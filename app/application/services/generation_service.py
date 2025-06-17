@@ -18,7 +18,7 @@ from app.domain.repositories.task_repository import TaskRepository
 from app.domain.repositories.webtoon_repository import WebtoonRepository
 from app.domain.value_objects.dimensions import PanelDimensions, PanelSize
 from app.domain.value_objects.position import Position
-from app.domain.value_objects.style import ArtStyle, StyleConfiguration
+from app.domain.value_objects.style import StyleConfiguration
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +42,14 @@ class GenerationService:
         self, request: GenerationRequestDTO
     ) -> GenerationResultDTO:
         """Start a webtoon generation task"""
+        # Import locally to avoid circular imports
+        from app.domain.constants.art_styles import ensure_art_style_string
+        
         task = GenerationTask(
             task_type=TaskType.WEBTOON_GENERATION,
             input_data={
                 "prompt": request.prompt,
-                "art_style": request.art_style.value,
+                "art_style": ensure_art_style_string(request.art_style),  # Ensure it's a valid string
                 "num_panels": request.num_panels,
                 "character_descriptions": request.character_descriptions or [],
                 "additional_context": request.additional_context,
@@ -71,7 +74,7 @@ class GenerationService:
     async def start_panel_generation(
         self,
         scene_description: str,
-        art_style: ArtStyle,
+        art_style: str,
         character_names: List[str] = None,
         panel_size: str = "full",
         mood: str = None,
@@ -79,12 +82,15 @@ class GenerationService:
         style_preferences: Dict[str, Any] = None,
     ) -> GenerationResultDTO:
         """Start a single panel generation task"""
+        # Import locally to avoid circular imports
+        from app.domain.constants.art_styles import ensure_art_style_string
+        
         # Create a task for panel generation
         task = GenerationTask(
             task_type=TaskType.PANEL_GENERATION,
             input_data={
                 "scene_description": scene_description,
-                "art_style": art_style.value,
+                "art_style": ensure_art_style_string(art_style),  # Use helper function
                 "character_names": character_names or [],
                 "panel_size": panel_size,
                 "mood": mood,
@@ -188,7 +194,7 @@ class GenerationService:
         self,
         scene_data: Dict[str, Any],
         characters: List[Character],
-        art_style: ArtStyle,
+        art_style: str,
     ) -> Panel:
         """Create a panel entity from scene data"""
         # Create scene
@@ -234,10 +240,12 @@ class GenerationService:
         # Generate image if image generator is available
         if self.image_generator.is_available():
             try:
-                style_config = StyleConfiguration.for_style(art_style)
+                # Ensure art_style is a string
+                art_style_str = art_style if isinstance(art_style, str) else getattr(art_style, 'value', str(art_style))
+                style_config = StyleConfiguration.for_style(art_style_str)
                 enhanced_prompt = await self.ai_provider.enhance_visual_description(
                     scene.get_prompt_description(),
-                    art_style.value,
+                    art_style_str,
                     {"style_config": style_config.to_prompt_text()},
                 )
 
@@ -248,7 +256,7 @@ class GenerationService:
                     enhanced_prompt,
                     panel.dimensions.width,
                     panel.dimensions.height,
-                    art_style.value,
+                    art_style_str,
                 )
 
                 panel.image_url = public_url

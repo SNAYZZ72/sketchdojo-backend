@@ -5,17 +5,25 @@ Generation Data Transfer Objects
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from app.domain.value_objects.style import ArtStyle
+# Import from centralized constants
+from app.domain.constants.art_styles import ensure_art_style_string, VALID_ART_STYLES
 
 
 class GenerationRequestDTO(BaseModel):
     """DTO for webtoon generation requests"""
 
     prompt: str = Field(..., description="Main story prompt")
-    art_style: ArtStyle = Field(default=ArtStyle.WEBTOON, description="Art style")
+    art_style: str = Field(default="webtoon", description="Art style")
     num_panels: int = Field(default=6, ge=1, le=20, description="Number of panels")
+    
+    @field_validator('art_style')
+    def validate_art_style(cls, v):
+        """Validate that the art style is one of the valid options"""
+        if v.lower() not in [s.lower() for s in VALID_ART_STYLES]:
+            raise ValueError(f"Invalid art style: {v}. Must be one of {VALID_ART_STYLES}")
+        return v.lower()
     character_descriptions: Optional[List[str]] = Field(
         default=None, description="Character descriptions"
     )
@@ -34,9 +42,16 @@ class PanelGenerationRequestDTO(BaseModel):
     character_names: List[str] = Field(
         default_factory=list, description="Characters in scene"
     )
-    art_style: ArtStyle = Field(default=ArtStyle.WEBTOON, description="Art style")
+    art_style: str = Field(default="webtoon", description="Art style")
     panel_size: str = Field(default="full", description="Panel size")
     mood: Optional[str] = Field(default=None, description="Scene mood")
+    
+    @field_validator('art_style')
+    def validate_art_style(cls, v):
+        """Validate that the art style is one of the valid options"""
+        if v.lower() not in [s.lower() for s in VALID_ART_STYLES]:
+            raise ValueError(f"Invalid art style: {v}. Must be one of {VALID_ART_STYLES}")
+        return v.lower()
 
 
 class GenerationResultDTO(BaseModel):

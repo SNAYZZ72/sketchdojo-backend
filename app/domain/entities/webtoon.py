@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 from app.domain.entities.character import Character
 from app.domain.entities.panel import Panel
-from app.domain.value_objects.style import ArtStyle
+# Using string literals for art style
 
 
 @dataclass
@@ -21,7 +21,7 @@ class Webtoon:
     id: UUID = field(default_factory=uuid4)
     title: str = ""
     description: str = ""
-    art_style: ArtStyle = field(default_factory=lambda: ArtStyle.WEBTOON)
+    art_style: str = field(default="webtoon")
     panels: List[Panel] = field(default_factory=list)
     characters: List[Character] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))

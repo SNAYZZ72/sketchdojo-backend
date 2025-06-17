@@ -28,8 +28,24 @@ def start_webtoon_generation_task(self, task_id: str, request_data: Dict[str, An
     task_id_celery = self.request.id
     task_retries = self.request.retries
     
+    # Log detailed information about the art_style field
+    if 'art_style' in request_data:
+        art_style = request_data['art_style']
+        logger.debug(f"ART_STYLE DEBUG - Type: {type(art_style).__name__}, Value: {art_style}")
+        
+        # Ensure art_style is a string
+        if hasattr(art_style, 'value'):
+            logger.warning(f"Found ArtStyle enum with value: {art_style.value}")
+            request_data['art_style'] = art_style.value
+        elif not isinstance(art_style, str):
+            logger.warning(f"Converting non-string art_style to string: {art_style}")
+            request_data['art_style'] = str(art_style)
+    
     logger.debug(f"CELERY TASK EXECUTION START - Task {task_name} with request ID {task_id_celery}")
-    logger.debug(f"Task parameters - task_id: {task_id}, request_data: {json.dumps(request_data, default=str)[:100]}...")
+    logger.debug(f"Task parameters - task_id: {task_id}")
+    logger.debug(f"Request data keys: {list(request_data.keys())}")
+    if 'art_style' in request_data:
+        logger.debug(f"art_style after processing: {request_data['art_style']} (type: {type(request_data['art_style']).__name__})")
     logger.debug(f"Environment variables: REDIS_URL={os.environ.get('REDIS_URL')}, CELERY_BROKER_URL={os.environ.get('CELERY_BROKER_URL')}")
     
     # Initialize storage directly here for consistent file storage usage
@@ -52,7 +68,6 @@ def start_webtoon_generation_task(self, task_id: str, request_data: Dict[str, An
         
         # List storage directory contents to verify access
         try:
-            import os
             if os.path.exists(storage_path):
                 files = os.listdir(storage_path)
                 logger.debug(f"Storage directory exists. Contents: {files[:10] if len(files) > 10 else files}")
@@ -69,7 +84,8 @@ def start_webtoon_generation_task(self, task_id: str, request_data: Dict[str, An
         task_repo = TaskRepository(storage)
         
         # Check if task exists in storage before updating
-        task = task_repo.get_by_id(task_id)
+        # Use asyncio.run to execute the coroutine in a sync context
+        task = asyncio.run(task_repo.get_by_id(task_id))
         if not task:
             logger.warning(f"Task {task_id} not found in storage. Creating task record.")
             from app.domain.entities.generation_task import GenerationTask, TaskType, TaskProgress
@@ -83,9 +99,10 @@ def start_webtoon_generation_task(self, task_id: str, request_data: Dict[str, An
             )
         
         # Update task status to IN_PROGRESS before starting
-        task.status = TaskStatus.IN_PROGRESS
+        task.status = TaskStatus.PROCESSING
         task.started_at = datetime.now(timezone.utc)
-        task_repo.save(task)
+        # Use asyncio.run to execute the coroutine in a sync context
+        asyncio.run(task_repo.save(task))
         logger.debug(f"Updated task {task_id} status to IN_PROGRESS")
         
         # Run the async generation in sync context
@@ -94,12 +111,12 @@ def start_webtoon_generation_task(self, task_id: str, request_data: Dict[str, An
         logger.debug(f"Async generation completed for task {task_id}")
         
         # Double-check that task status is updated to COMPLETED
-        task = task_repo.get_by_id(task_id)
+        task = asyncio.run(task_repo.get_by_id(task_id))
         if task and task.status != TaskStatus.COMPLETED:
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.now(timezone.utc)
             task.result = result
-            task_repo.save(task)
+            asyncio.run(task_repo.save(task))
             logger.debug(f"Double-check update: task {task_id} status set to COMPLETED")
         
         logger.debug(f"CELERY TASK EXECUTION COMPLETE - Task {task_name} with ID {task_id_celery}")
@@ -116,12 +133,14 @@ def start_webtoon_generation_task(self, task_id: str, request_data: Dict[str, An
             storage = FileStorage(storage_path)
             task_repo = TaskRepository(storage)
             
-            task = task_repo.get_by_id(task_id)
+            # Use asyncio.run to execute async methods in a sync context
+            task = asyncio.run(task_repo.get_by_id(task_id))
             if task:
                 task.status = TaskStatus.FAILED
                 task.error_message = str(e)
                 task.completed_at = datetime.now(timezone.utc)
-                task_repo.save(task)
+                # Use asyncio.run to execute async save method
+                asyncio.run(task_repo.save(task))
                 logger.debug(f"Updated task {task_id} status to FAILED")
         except Exception as inner_e:
             logger.error(f"Failed to update task status to FAILED: {str(inner_e)}", exc_info=True)
@@ -153,7 +172,6 @@ async def generate_webtoon_async(
         from app.config import get_settings
         from app.domain.repositories.task_repository import TaskRepository
         from app.domain.repositories.webtoon_repository import WebtoonRepository
-        from app.domain.value_objects.style import ArtStyle
         # TaskStatus is already imported at the top-level
         from app.application.interfaces.storage_provider import StorageProvider
         from app.infrastructure.ai.openai_provider import OpenAIProvider
@@ -177,9 +195,9 @@ async def generate_webtoon_async(
         task_repo = TaskRepository(storage)
         
         # Update task status to in-progress
-        task = await task_repo.get(task_id)
+        task = await task_repo.get_by_id(task_id)
         if task:
-            task.status = TaskStatus.IN_PROGRESS
+            task.status = TaskStatus.PROCESSING
             task.started_at = datetime.now(UTC)
             task.progress.current_operation = "Initializing generation process..."
             await task_repo.save(task)
@@ -205,9 +223,10 @@ async def generate_webtoon_async(
         )
 
         # Convert request data to DTO
+        request_data = request_data.copy()
         request_dto = GenerationRequestDTO(
             prompt=request_data["prompt"],
-            art_style=ArtStyle(request_data["art_style"]),
+            art_style=request_data["art_style"],
             num_panels=request_data["num_panels"],
             character_descriptions=request_data.get("character_descriptions"),
             additional_context=request_data.get("additional_context"),
@@ -219,9 +238,13 @@ async def generate_webtoon_async(
             task_id, 20.0, "Generating story structure..."
         )
 
+        # Use helper function to ensure art_style is a valid string
+        from app.domain.constants.art_styles import ensure_art_style_string
+        art_style_str = ensure_art_style_string(request_dto.art_style)
+        
         story_data = await ai_provider.generate_story(
             request_dto.prompt,
-            request_dto.art_style.value,
+            art_style_str,
             request_dto.additional_context,
         )
 
@@ -247,10 +270,13 @@ async def generate_webtoon_async(
             )
 
             # Create enhanced prompt for image generation
+            # We use the already converted art_style_str from earlier
+            # No need to convert again
+                
             enhanced_prompt = await ai_provider.enhance_visual_description(
                 scene_data.get("visual_description", ""),
-                request_dto.art_style.value,
-                {"style": request_dto.art_style.value},
+                art_style_str,
+                {"style": art_style_str},
             )
 
             # Generate image
@@ -263,7 +289,7 @@ async def generate_webtoon_async(
                         enhanced_prompt,
                         1024,
                         1024,
-                        request_dto.art_style.value,
+                        art_style_str,
                     )
                     scene_data["image_url"] = public_url
                 except Exception as e:
@@ -308,8 +334,18 @@ async def generate_webtoon_async(
         )
 
         # Update task status in the database
-        task_repository = TaskRepository(get_storage_provider())
-        task = await task_repository.get(task_id)
+        # Initialize storage similar to how it's done in the exception handler
+        storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "memory"))
+        if storage_type == "file":
+            storage_path = getattr(settings, "file_storage_path", getattr(settings, "storage_path", "./storage"))
+            from app.infrastructure.storage.file_storage import FileStorage
+            storage = FileStorage(storage_path)
+        else:
+            from app.infrastructure.storage.memory_storage import MemoryStorage
+            storage = MemoryStorage()
+        
+        task_repository = TaskRepository(storage)
+        task = await task_repository.get_by_id(task_id)
         if task:
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.now(UTC)
@@ -330,8 +366,18 @@ async def generate_webtoon_async(
         logger.error(f"Error in async generation {task_id}: {str(e)}")
         
         # Update task status in the database for failures
-        task_repository = TaskRepository(get_storage_provider())
-        task = await task_repository.get(task_id)
+        # Initialize storage similar to the main function body
+        storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "memory"))
+        if storage_type == "file":
+            storage_path = getattr(settings, "file_storage_path", getattr(settings, "storage_path", "./storage"))
+            from app.infrastructure.storage.file_storage import FileStorage
+            error_storage = FileStorage(storage_path)
+        else:
+            from app.infrastructure.storage.memory_storage import MemoryStorage
+            error_storage = MemoryStorage()
+        
+        task_repository = TaskRepository(error_storage)
+        task = await task_repository.get_by_id(task_id)
         if task:
             task.status = TaskStatus.FAILED
             task.completed_at = datetime.now(UTC)

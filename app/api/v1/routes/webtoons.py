@@ -31,7 +31,7 @@ async def create_webtoon(
         webtoon_dto = await service.create_webtoon(
             title=request.title,
             description=request.description,
-            art_style=request.art_style.value,
+            art_style=request.art_style,
         )
         return WebtoonResponse.from_dto(webtoon_dto)
     except Exception as e:

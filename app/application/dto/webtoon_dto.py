@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.domain.value_objects.style import ArtStyle
+# Using string literals for art style
 
 
 class CharacterDTO(BaseModel):
@@ -41,7 +41,7 @@ class WebtoonDTO(BaseModel):
     id: UUID
     title: str
     description: str
-    art_style: ArtStyle
+    art_style: str
     panels: List[PanelDTO]
     characters: List[CharacterDTO]
     created_at: datetime

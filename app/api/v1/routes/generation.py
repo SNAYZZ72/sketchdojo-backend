@@ -47,28 +47,30 @@ async def generate_webtoon(
         logger.debug(f"Submitting task with task_id: {result_dto.task_id}")
         
         try:
-            # Convert DTO to dict and ensure all data is JSON serializable
-            request_dict = request_dto.dict()
-            logger.debug(f"Request dict before serialization: {request_dict}")
+            # Import our helper function
+            from app.domain.constants.art_styles import ensure_art_style_string
             
-            # Handle enums and other non-serializable objects
+            # Create a JSON-serializable dictionary from the DTO
+            request_dict = request_dto.dict()
+            
+            # Ensure art_style is a valid string using our helper
             if 'art_style' in request_dict:
-                request_dict['art_style'] = request_dict['art_style'].value if hasattr(request_dict['art_style'], 'value') else str(request_dict['art_style'])
+                request_dict['art_style'] = ensure_art_style_string(request_dict['art_style'])
             
             # Ensure all values in style_preferences are serializable
             if 'style_preferences' in request_dict and request_dict['style_preferences']:
-                for key, value in request_dict['style_preferences'].items():
-                    if hasattr(value, 'value'):  # Handle potential enums in style preferences
+                for key, value in list(request_dict['style_preferences'].items()):
+                    if hasattr(value, 'value'):  # Handle enums
                         request_dict['style_preferences'][key] = value.value
-                    elif hasattr(value, '__dict__'):  # Handle custom objects
+                    elif not isinstance(value, (str, int, float, bool, type(None), list, dict)):
                         request_dict['style_preferences'][key] = str(value)
             
-            # For safety, convert any remaining non-serializable objects to strings
-            for key, value in request_dict.items():
-                if hasattr(value, '__dict__') and not isinstance(value, (dict, list, str, int, float, bool, type(None))):
+            # Final check to ensure everything is serializable
+            for key, value in list(request_dict.items()):
+                if not isinstance(value, (str, int, float, bool, type(None), list, dict)):
                     request_dict[key] = str(value)
             
-            logger.debug(f"Serialized request dict: {request_dict}")
+            logger.debug(f"Sending Celery task with task_id: {result_dto.task_id}")
             
             # Send the task to Celery
             celery_app.send_task(
@@ -131,10 +133,8 @@ async def generate_webtoon_sync(
     """Synchronous generation for testing (development only)"""
     try:
         from app.application.dto.generation_dto import GenerationRequestDTO
-        from app.domain.value_objects.style import ArtStyle
-
         request_dto = GenerationRequestDTO(
-            prompt=prompt, art_style=ArtStyle(art_style), num_panels=num_panels
+            prompt=prompt, art_style=art_style, num_panels=num_panels
         )
 
         result = await service.generate_webtoon_sync(request_dto)

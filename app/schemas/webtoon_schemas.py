@@ -9,7 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.application.dto.webtoon_dto import CharacterDTO, PanelDTO, WebtoonDTO
-from app.domain.value_objects.style import ArtStyle
+# Using string literals for art style
 from app.schemas.common_schemas import TimestampMixin
 
 
@@ -112,7 +112,7 @@ class WebtoonCreateRequest(BaseModel):
 
     title: str = Field(..., min_length=1, max_length=200)
     description: str = Field(default="", max_length=2000)
-    art_style: ArtStyle = Field(default=ArtStyle.WEBTOON)
+    art_style: str = Field(default="webtoon", pattern="^(manga|webtoon|comic|anime|realistic|sketch|chibi)$")
 
 
 class WebtoonResponse(TimestampMixin):
@@ -121,7 +121,7 @@ class WebtoonResponse(TimestampMixin):
     id: UUID
     title: str
     description: str
-    art_style: ArtStyle
+    art_style: str
     panels: List[PanelResponse]
     characters: List[CharacterResponse]
     is_published: bool

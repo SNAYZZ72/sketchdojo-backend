@@ -132,7 +132,7 @@ class WebtoonRepository(BaseRepository[Webtoon]):
             id=UUID(data["id"]),
             title=data["title"],
             description=data["description"],
-            art_style=ArtStyle(data["art_style"]),
+            art_style=data["art_style"],
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
             is_published=data["is_published"],
