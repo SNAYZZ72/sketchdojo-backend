@@ -40,14 +40,24 @@ async def create_webtoon(
 
 @router.get("/{webtoon_id}", response_model=WebtoonResponse)
 async def get_webtoon(
-    webtoon_id: UUID, service: WebtoonService = Depends(get_webtoon_service)
+    webtoon_id: UUID, 
+    include_html: bool = Query(False, description="Include HTML content for rendering"),
+    service: WebtoonService = Depends(get_webtoon_service)
 ):
     """Get a webtoon by ID"""
     webtoon_dto = await service.get_webtoon(webtoon_id)
     if not webtoon_dto:
         raise HTTPException(status_code=404, detail="Webtoon not found")
 
-    return WebtoonResponse.from_dto(webtoon_dto)
+    # Create the response
+    response = WebtoonResponse.from_dto(webtoon_dto)
+    
+    # Add HTML content if requested
+    if include_html:
+        html_content = await service.get_webtoon_html_content(webtoon_id)
+        response.html_content = html_content
+        
+    return response
 
 
 @router.get("/", response_model=WebtoonListResponse)

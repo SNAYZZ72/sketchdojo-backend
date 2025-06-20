@@ -71,8 +71,7 @@ class Settings(BaseSettings):
 
     # Define model_config with all settings in one place
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
+        # Removed env_file to prevent DotEnvSettingsSource from being used
         case_sensitive=False,
         extra="allow",
         frozen=True,
@@ -80,9 +79,24 @@ class Settings(BaseSettings):
 
     @field_validator("cors_origins", mode="before")
     def validate_cors_origins(cls, v):
-        """Convert any list to tuple for hashability"""
+        """Convert any list to tuple for hashability, or string to list then tuple"""
         if isinstance(v, list):
             return tuple(v)
+        elif isinstance(v, str):
+            # Handle comma-separated string like "http://localhost:3000,http://example.com"
+            if ',' in v:
+                return tuple(origin.strip() for origin in v.split(','))
+            # Handle JSON-formatted string array like '["http://localhost:3000"]'
+            elif v.startswith('[') and v.endswith(']'):
+                try:
+                    import json
+                    origins = json.loads(v)
+                    if isinstance(origins, list):
+                        return tuple(origins)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            # Single origin as string
+            return (v,)
         return v
 
 

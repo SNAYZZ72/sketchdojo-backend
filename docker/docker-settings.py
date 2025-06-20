@@ -19,7 +19,7 @@ class DockerSettings(Settings):
 
     # API settings
     api_v1_prefix: str = "/api/v1"
-    allow_origins: list = ["*"]  # In production, limit this to your frontend domain
+    cors_origins: list[str] = ["*"]  # In production, limit this to your frontend domain
 
     # Security settings
     secret_key: str = os.getenv("SECRET_KEY", "change-this-in-production")

@@ -1,6 +1,6 @@
 # app/tasks/generation_tasks.py
 """
-Background tasks for webtoon generation
+Background tasks for webtoon and panel generation
 """
 import asyncio
 import logging
@@ -8,7 +8,7 @@ import os
 import json
 from datetime import datetime, timezone, UTC
 from typing import Any, Dict, List
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.tasks.celery_app import celery_app
 from app.websocket.connection_manager import get_connection_manager
@@ -317,8 +317,8 @@ async def generate_webtoon_async(
             task_id, 95.0, "Finalizing webtoon..."
         )
 
-        # Create webtoon entity and save (simplified for this example)
-        webtoon_id = str(UUID(int=0))  # Generate proper UUID in real implementation
+        # Create webtoon entity and save with dynamically generated UUID
+        webtoon_id = str(uuid4())
 
         result = {
             "webtoon_id": webtoon_id,
@@ -356,8 +356,26 @@ async def generate_webtoon_async(
             await task_repository.save(task)
 
         await connection_manager.broadcast_generation_completed(
-            task_id, webtoon_id, result
+            task_id, result, webtoon_id=webtoon_id
         )
+        
+        # Fetch and broadcast HTML content
+        try:
+            # Import the webtoon service
+            from app.application.services.webtoon_service import WebtoonService, get_webtoon_service
+            
+            # Get webtoon service
+            webtoon_service = get_webtoon_service()
+            
+            # Fetch HTML content
+            html_content = await webtoon_service.get_webtoon_html_content(UUID(webtoon_id))
+            
+            # Broadcast update if HTML content is available
+            if html_content:
+                logger.info(f"Broadcasting HTML update for newly created webtoon: {webtoon_id}")
+                await connection_manager.broadcast_webtoon_updated(webtoon_id, html_content)
+        except Exception as html_error:
+            logger.error(f"Error fetching/broadcasting HTML content: {str(html_error)}", exc_info=True)
 
         logger.info(f"Webtoon generation completed: {task_id}")
         return result
@@ -401,3 +419,323 @@ def cleanup_old_tasks():
     logger.info("Running task cleanup...")
     # Implement cleanup logic
     return "Cleanup completed"
+
+
+@celery_app.task(bind=True)
+def start_panel_generation_task(self, task_id: str, request_data: Dict[str, Any]):
+    """Background task for single panel generation"""
+    task_name = self.name
+    task_id_celery = self.request.id
+    task_retries = self.request.retries
+    
+    # Log environment info to debug API key issues
+    logger.info(f"Panel generation task started. Task ID: {task_id}")
+    
+    # Access settings via Celery app configuration
+    stability_api_key = celery_app.conf.get('STABILITY_API_KEY') or os.environ.get('STABILITY_API_KEY')
+    logger.info(f"STABILITY_API_KEY available: {stability_api_key is not None}")
+    if stability_api_key:
+        logger.info(f"API key length: {len(stability_api_key)}")
+    else:
+        logger.warning("STABILITY_API_KEY is None or empty!")
+    
+    # Ensure art_style is a string if present
+    if 'art_style' in request_data:
+        from app.domain.constants.art_styles import ensure_art_style_string
+        request_data['art_style'] = ensure_art_style_string(request_data['art_style'])
+    
+    logger.info(f"Starting panel generation task {task_id} (celery ID: {task_id_celery})")
+    
+    # Initialize storage directly here for consistent file storage usage
+    try:
+        # Get settings
+        from app.config import get_settings
+        settings = get_settings()
+        
+        # Initialize storage with proper settings for Docker environment
+        # Force file storage for consistency
+        from app.infrastructure.storage.file_storage import FileStorage
+        
+        # Handle both standard and Docker settings paths
+        storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "file"))        
+        storage_path = getattr(settings, "file_storage_path", getattr(settings, "storage_path", "/app/storage"))
+        
+        # Log the storage configuration for debugging
+        logger.debug(f"Using storage type: {storage_type} at path: {storage_path}")
+        
+        # Always use file storage in the Celery task for consistency with API
+        logger.debug("Initializing file storage and task repository")
+        storage = FileStorage(storage_path)
+        task_repo = TaskRepository(storage)
+        
+        # Check if task exists in storage before updating
+        # Use asyncio.run to execute the coroutine in a sync context
+        task = asyncio.run(task_repo.get_by_id(task_id))
+        if not task:
+            logger.warning(f"Task {task_id} not found in storage. Creating task record.")
+            from app.domain.entities.generation_task import GenerationTask, TaskType, TaskProgress
+            task = GenerationTask(
+                id=task_id,
+                task_type=TaskType.PANEL_GENERATION,
+                status=TaskStatus.PENDING,
+                input_data=request_data,
+                created_at=datetime.now(UTC),
+                progress=TaskProgress()
+            )
+        
+        # Update task status to processing
+        task.status = TaskStatus.PROCESSING
+        task.started_at = datetime.now(UTC)
+        
+        # Save the updated task
+        asyncio.run(task_repo.save(task))
+        
+        # Get websocket connection manager
+        connection_manager = get_connection_manager()
+        
+        # Notify clients that processing has started
+        asyncio.run(connection_manager.broadcast_generation_progress(
+            task_id, 0.0, "Starting panel generation..."
+        ))
+        
+        # Run the async generation logic in a synchronous context
+        try:
+            result = asyncio.run(generate_panel_async(task_id, request_data))
+            
+            # Update task with completion info
+            task.status = TaskStatus.COMPLETED
+            task.completed_at = datetime.now(UTC)
+            task.result = result
+            task.progress.percentage = 100.0
+            task.progress.current_step = task.progress.total_steps
+            task.progress.current_operation = "Panel generation completed successfully"
+            
+            # Save the completed task
+            asyncio.run(task_repo.save(task))
+            
+            # Notify WebSocket clients of completion
+            logger.info(f"Broadcasting panel generation completion: {task_id}")
+            asyncio.run(connection_manager.broadcast_generation_completed(
+                task_id, result
+            ))
+            
+            # Fetch and broadcast HTML content if we have a webtoon_id
+            if 'webtoon_id' in request_data:
+                try:
+                    webtoon_id = request_data['webtoon_id']
+                    
+                    # Import the webtoon service
+                    from app.application.services.webtoon_service import WebtoonService, get_webtoon_service
+                    
+                    # Get webtoon service
+                    webtoon_service = get_webtoon_service()
+                    
+                    # Fetch HTML content asynchronously
+                    html_content = asyncio.run(webtoon_service.get_webtoon_html_content(UUID(webtoon_id)))
+                    
+                    # Broadcast update if HTML content is available
+                    if html_content:
+                        logger.info(f"Broadcasting HTML update for webtoon: {webtoon_id}")
+                        asyncio.run(connection_manager.broadcast_webtoon_updated(webtoon_id, html_content))
+                except Exception as html_error:
+                    logger.error(f"Error fetching/broadcasting HTML content: {str(html_error)}", exc_info=True)
+            
+            # Return the result for Celery task tracking
+            return result
+            
+        except Exception as e:
+            # Handle errors in panel generation
+            logger.error(f"Panel generation failed: {str(e)}", exc_info=True)
+            
+            # Update task with failure info
+            task.status = TaskStatus.FAILED
+            task.error_message = str(e)
+            task.completed_at = datetime.now(UTC)
+            
+            # Save the failed task
+            asyncio.run(task_repo.save(task))
+            
+            # Notify clients of failure
+            asyncio.run(notify_generation_failed(task_id, str(e)))
+            
+            # Re-raise the exception for Celery to handle
+            raise
+            
+    except Exception as e:
+        logger.error(f"Error in panel generation task: {str(e)}", exc_info=True)
+        # Notify clients of failure through WebSocket
+        try:
+            connection_manager = get_connection_manager()
+            asyncio.run(notify_generation_failed(task_id, str(e)))
+        except Exception as notify_error:
+            logger.error(f"Failed to notify clients of error: {str(notify_error)}")
+        # Re-raise the exception for Celery to handle
+        raise
+
+
+async def generate_panel_async(task_id: str, request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Async panel generation logic"""
+    logger.info(f"Starting async panel generation for task: {task_id}")
+    
+    connection_manager = get_connection_manager()
+    
+    # Initialize repositories and services
+    try:
+        # Get settings for storage and other configurations
+        from app.config import get_settings
+        settings = get_settings()
+        
+        # Initialize storage
+        from app.infrastructure.storage.file_storage import FileStorage
+        storage_path = getattr(settings, "file_storage_path", getattr(settings, "storage_path", "/app/storage"))
+        storage = FileStorage(storage_path)
+        task_repository = TaskRepository(storage)
+        
+        # Get connection manager
+        connection_manager = get_connection_manager()
+        
+        # Initialize AI provider with required API key
+        from app.infrastructure.ai.openai_provider import OpenAIProvider
+        ai_provider = OpenAIProvider(
+            api_key=settings.openai_api_key,
+            model=settings.openai_model,
+            temperature=settings.openai_temperature,
+            max_tokens=settings.openai_max_tokens,
+        )
+        
+        # Initialize image generator with required API key
+        from app.infrastructure.image.stability_provider import StabilityProvider
+        image_generator = StabilityProvider(
+            api_key=settings.stability_api_key,
+            api_url=settings.stability_api_url,
+        )
+        
+        # Extract parameters from request data
+        scene_description = request_data.get("scene_description")
+        art_style = request_data.get("art_style")
+        character_names = request_data.get("character_names", [])
+        panel_size = request_data.get("panel_size", "full")
+        mood = request_data.get("mood")
+        prompt = request_data.get("prompt")
+        style_preferences = request_data.get("style_preferences", {})
+        
+        # Notify clients of panel detail generation
+        await connection_manager.broadcast_generation_progress(
+            task_id, 20.0, "Generating panel details..."
+        )
+        
+        # Generate panel details using combination of existing methods
+        panel_details = {}
+        
+        # Generate dialogue using available method if we have character names
+        if character_names:
+            try:
+                dialogue = await ai_provider.generate_dialogue(
+                    scene_description=scene_description,
+                    character_names=character_names,
+                    mood=mood or "neutral"
+                )
+                panel_details["dialogue"] = dialogue
+            except Exception as e:
+                logger.warning(f"Failed to generate dialogue: {str(e)}")
+                panel_details["dialogue"] = []
+        
+        # Enhance the visual description for better image generation
+        try:
+            # Create technical specifications for visual enhancement
+            tech_specs = {
+                "panel_size": panel_size,
+                "mood": mood or "neutral",
+                "style_preferences": style_preferences or {}
+            }
+            
+            enhanced_description = await ai_provider.enhance_visual_description(
+                base_description=scene_description,
+                art_style=art_style,
+                technical_specs=tech_specs
+            )
+            panel_details["visual_description"] = enhanced_description
+        except Exception as e:
+            logger.warning(f"Failed to enhance visual description: {str(e)}")
+            panel_details["visual_description"] = scene_description
+        
+        # Update progress
+        await connection_manager.broadcast_generation_progress(
+            task_id, 50.0, "Generating panel image..."
+        )
+        
+        # Generate image for the panel
+        image_url = None
+        try:
+            # Create enhanced prompt for image generation
+            visual_description = panel_details.get("visual_description", scene_description)
+            enhanced_prompt = f"{visual_description} Style: {art_style}"
+            
+            if style_preferences:
+                enhanced_prompt += f" {' '.join([f'{k}: {v}' for k, v in style_preferences.items()])}"
+                
+            # Generate the image
+            image_result = await image_generator.generate_image(
+                prompt=enhanced_prompt,
+                style=art_style,  # Using the correct parameter name 'style' instead of 'art_style'
+                width=1024,  # Default width, can be adjusted based on panel_size
+                height=768   # Default height, can be adjusted based on panel_size
+            )
+            
+            # StabilityProvider.generate_image returns a tuple of (file_path, public_url)
+            if image_result and len(image_result) == 2:
+                file_path, public_url = image_result
+                image_url = public_url
+                panel_details["image_url"] = image_url
+                logger.info(f"Generated image saved at {file_path}, public URL: {public_url}")
+            else:
+                logger.warning("Image generation did not return the expected tuple format")
+        except Exception as e:
+            logger.warning(f"Failed to generate image for panel: {str(e)}")
+            panel_details["image_url"] = None
+        
+        # Notify clients of panel completion
+        await connection_manager.broadcast_generation_progress(
+            task_id, 100.0, "Panel generation completed!"
+        )
+        
+        # Prepare the result data
+        result = {
+            "panel": panel_details,
+            "image_url": image_url
+        }
+        
+        # Notify panel completion
+        await connection_manager.broadcast_task_update(
+            task_id,
+            {
+                "panel_generated": {
+                    "panel_details": panel_details,
+                    "image_url": image_url
+                }
+            },
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in async panel generation: {str(e)}", exc_info=True)
+        # Initialize storage and repository if not already done
+        if not storage:
+            from app.infrastructure.storage.file_storage import FileStorage
+            from app.config import get_settings
+            settings = get_settings()
+            storage_path = getattr(settings, "file_storage_path", getattr(settings, "storage_path", "/app/storage"))
+            storage = FileStorage(storage_path)
+        if not task_repository:
+            task_repository = TaskRepository(storage)
+        
+        # Get the task and update its status
+        task = await task_repository.get_by_id(task_id)
+        if task:
+            task.status = TaskStatus.FAILED
+            task.error_message = str(e)
+            await task_repository.save(task)
+        
+        # Re-raise the exception
+        raise

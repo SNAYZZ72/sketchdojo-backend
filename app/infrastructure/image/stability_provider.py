@@ -47,22 +47,32 @@ class StabilityProvider(ImageGenerator):
         style: str = "webtoon",
     ) -> Tuple[str, str]:
         """Generate an image from a prompt"""
-        if not self.is_available():
-            return await self._generate_placeholder_image(prompt, width, height)
+        logger.debug(f"StabilityProvider.generate_image called with prompt: {prompt[:30]}..., style: {style}")
+        
+        is_available = await self.is_available()
+        if not is_available:
+            logger.info(f"StabilityProvider not available (API key missing), generating placeholder image")
+            result = await self._generate_placeholder_image(prompt, width, height)
+            logger.debug(f"Placeholder image result type: {type(result)}, content: {result}")
+            return result
 
         try:
-            enhanced_prompt = await self.enhance_prompt(
-                prompt, self._get_style_modifiers(style)
-            )
+            style_modifiers = self._get_style_modifiers(style)
+            logger.debug(f"Style modifiers for {style}: {style_modifiers}")
+            enhanced_prompt = await self.enhance_prompt(prompt, style_modifiers)
+            logger.debug(f"Enhanced prompt: {enhanced_prompt[:50]}...")
 
             headers = {
                 "Content-Type": "application/json",
                 "Accept": "application/json",
                 "Authorization": f"Bearer {self.api_key}",
             }
+            logger.debug(f"API key configured: {self.api_key is not None}")
 
             # Ensure dimensions are valid for SDXL
+            original_dims = (width, height)
             width, height = self._normalize_dimensions(width, height)
+            logger.debug(f"Normalized dimensions from {original_dims} to {(width, height)}")
 
             payload = {
                 "text_prompts": [{"text": enhanced_prompt, "weight": 1.0}],
@@ -82,24 +92,29 @@ class StabilityProvider(ImageGenerator):
 
                         if "artifacts" in response_data and response_data["artifacts"]:
                             image_data = response_data["artifacts"][0]["base64"]
-                            return await self._save_image(image_data, prompt)
+                            logger.info("Successfully received image data from Stability API")
+                            result = await self._save_image(image_data, prompt)
+                            logger.debug(f"Image save result: {type(result)}, content: {result}")
+                            return result
                         else:
                             logger.error("No image artifacts in response")
-                            return await self._generate_placeholder_image(
-                                prompt, width, height
-                            )
+                            return await self._generate_placeholder_image(prompt, width, height)
                     else:
                         error_text = await response.text()
                         logger.error(
                             f"Stability API error ({response.status}): {error_text}"
                         )
-                        return await self._generate_placeholder_image(
-                            prompt, width, height
-                        )
+                        logger.error("Falling back to placeholder image due to error in API call")
+                        result = await self._generate_placeholder_image(prompt, width, height)
+                        logger.debug(f"Placeholder image result from API error: {type(result)}, content: {result}")
+                        return result
 
         except Exception as e:
             logger.error(f"Error generating image: {str(e)}")
-            return await self._generate_placeholder_image(prompt, width, height)
+            logger.exception("Full traceback:")
+            result = await self._generate_placeholder_image(prompt, width, height)
+            logger.debug(f"Placeholder image result from exception: {type(result)}, content: {result}")
+            return result
 
     async def enhance_prompt(self, base_prompt: str, style_modifiers: str) -> str:
         """Enhance a prompt with style-specific modifiers"""
@@ -116,10 +131,11 @@ class StabilityProvider(ImageGenerator):
 
         return enhanced
 
-    def is_available(self) -> bool:
+    async def is_available(self) -> bool:
         """Check if the image generator is available"""
-        # Force using placeholder images for testing
-        return False  # Previously: return self.api_key is not None
+        available = self.api_key is not None
+        logger.debug(f"StabilityProvider.is_available() returning {available}")
+        return available
 
     def _get_style_modifiers(self, style: str) -> str:
         """Get style-specific modifiers for prompts"""

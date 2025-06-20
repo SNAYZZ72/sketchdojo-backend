@@ -24,8 +24,20 @@ async def websocket_endpoint(websocket: WebSocket):
     chat_handler = get_chat_handler()
     tool_handler = get_tool_handler()
     
-    # Grant default tool permissions to new clients
-    tool_handler.grant_permissions(client_id, ["echo", "weather"])
+    # Grant permissions for all available tools to new clients
+    available_tools = [tool.tool_id for tool in tool_handler.tool_registry.tools.values()]
+    
+    # Grant basic tools + all webtoon tools
+    webtoon_tools = [tool_id for tool_id in available_tools if tool_id.startswith("create_") or 
+                    tool_id.startswith("edit_") or tool_id.startswith("remove_") or 
+                    tool_id.startswith("add_")]
+    
+    # Combine built-in tools with webtoon tools
+    granted_tools = ["echo", "weather"] + webtoon_tools
+    tool_handler.grant_permissions(client_id, granted_tools)
+    
+    logger.info(f"Granted tool permissions for client {client_id}: {', '.join(granted_tools)}")
+
 
     try:
         await connection_manager.connect(websocket, client_id)

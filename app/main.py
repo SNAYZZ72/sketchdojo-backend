@@ -32,6 +32,14 @@ async def lifespan(app: FastAPI):
 
     # Initialize connection manager
     connection_manager = get_connection_manager()
+    
+    # Setup WebSocket tools
+    try:
+        from app.websocket.setup import setup_websocket_tools
+        available_tools = await setup_websocket_tools()
+        logger.info(f"Registered WebSocket tools: {len(available_tools)}")
+    except Exception as e:
+        logger.error(f"Error setting up WebSocket tools: {str(e)}")
 
     logger.info(f"Starting {settings.app_name} v{settings.app_version}")
     logger.info(f"Environment: {settings.environment}")

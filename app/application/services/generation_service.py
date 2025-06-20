@@ -102,7 +102,25 @@ class GenerationService:
 
         await self.task_repository.save(task)
 
-        # This would normally be processed in a background task
+        # Prepare request data for Celery task
+        panel_request_data = {
+            "scene_description": scene_description,
+            "art_style": ensure_art_style_string(art_style),  # Use helper function
+            "character_names": character_names or [],
+            "panel_size": panel_size,
+            "mood": mood,
+            "prompt": prompt,
+            "style_preferences": style_preferences or {},
+        }
+        
+        # Submit task to Celery for async processing
+        from app.tasks.celery_app import celery_app
+        logger.debug(f"Submitting panel generation task with task_id: {task.id}")
+        
+        # Import and call the Celery task
+        from app.tasks.generation_tasks import start_panel_generation_task
+        start_panel_generation_task.delay(task_id=task.id, request_data=panel_request_data)
+        
         return GenerationResultDTO(
             task_id=task.id,
             status=task.status.value,

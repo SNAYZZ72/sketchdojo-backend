@@ -127,6 +127,7 @@ class WebtoonResponse(TimestampMixin):
     is_published: bool
     panel_count: int
     character_count: int
+    html_content: Optional[str] = None
 
     @classmethod
     def from_dto(cls, dto: WebtoonDTO) -> "WebtoonResponse":

@@ -140,17 +140,50 @@ class ConnectionManager:
         await self.broadcast_task_update(task_id, update)
 
     async def broadcast_generation_completed(
-        self, task_id: str, webtoon_id: str, result_data: dict
+        self, task_id: str, result_data: dict, webtoon_id: str = None
     ):
         """Broadcast generation completion"""
         update = {
             "status": "completed",
-            "webtoon_id": webtoon_id,
             "result_data": result_data,
             "timestamp": str(datetime.now(UTC)),
         }
+        
+        # Add webtoon_id only if provided
+        if webtoon_id:
+            update["webtoon_id"] = webtoon_id
 
         await self.broadcast_task_update(task_id, update)
+
+    async def broadcast_webtoon_updated(self, webtoon_id: str, html_content: str):
+        """Broadcast webtoon update with HTML content"""
+        # Find all clients subscribed to any task involving this webtoon
+        target_clients = set()
+        
+        # Look through task subscriptions to find relevant clients
+        for task_id, client_ids in self.task_subscriptions.items():
+            # Check task_id format - often task_ids might contain webtoon_id
+            # This is a simplistic approach, in a real implementation you might want more precise targeting
+            target_clients.update(client_ids)
+        
+        if not target_clients:
+            logger.warning(f"No clients subscribed for webtoon {webtoon_id} updates")
+            return
+        
+        update = {
+            "type": "webtoon_updated",
+            "webtoon_id": webtoon_id,
+            "html_content": html_content,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        
+        # Send update to all target clients
+        for client_id in target_clients:
+            await self.send_personal_message(update, client_id)
+            
+        logger.info(
+            f"Broadcast webtoon update for {webtoon_id} to {len(target_clients)} clients"
+        )
 
     async def broadcast_generation_failed(self, task_id: str, error_message: str):
         """Broadcast generation failure"""

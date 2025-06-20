@@ -16,6 +16,8 @@ class WebtoonService:
     """Service for webtoon business operations"""
 
     def __init__(self, repository: WebtoonRepository):
+        from app.utils.webtoon_renderer import WebtoonRenderer
+        self.renderer = WebtoonRenderer()
         self.repository = repository
 
     async def create_webtoon(
@@ -120,3 +122,18 @@ class WebtoonService:
             image_url=panel.image_url,
             generated_at=panel.generated_at,
         )
+        
+    async def get_webtoon_html_content(self, webtoon_id: UUID) -> Optional[str]:
+        """Generate HTML content for a webtoon"""
+        webtoon = await self.repository.get_by_id(webtoon_id)
+        if not webtoon:
+            return None
+            
+        # Generate HTML using the renderer
+        html_content = self.renderer.render_webtoon(webtoon)
+        css_styles = self.renderer.render_css_styles()
+        
+        # Combine CSS and HTML
+        full_html = f"{css_styles}\n{html_content}"
+        
+        return full_html
