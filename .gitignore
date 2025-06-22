@@ -129,7 +129,7 @@ static/generated_images/
 static/temp/
 logs/
 *.log
-storage/
+
 
 # Docker
 docker-compose.override.yml

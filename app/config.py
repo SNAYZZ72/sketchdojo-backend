@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     )
 
     # Storage Configuration
-    storage_type: str = Field(default="memory")  # memory, file
+    storage_type: str = Field(default="file")  # file, redis
     file_storage_path: str = Field(default="./storage")
 
     # Generation Configuration

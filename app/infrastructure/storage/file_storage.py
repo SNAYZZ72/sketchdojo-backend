@@ -133,10 +133,61 @@ class FileStorage(StorageProvider):
     async def store_json(self, key: str, data: Dict[str, Any]) -> bool:
         """Store JSON data"""
         return await self.store(key, data)
+    
+    def store_sync(self, key: str, data: Any) -> bool:
+        """Synchronous version of store method for use in Celery tasks"""
+        try:
+            file_path = self._get_file_path(key)
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(file_path, "w") as f:
+                if isinstance(data, (dict, list)):
+                    json.dump(data, f, default=str)
+                else:
+                    f.write(str(data))
+            
+            logger.debug(f"Synchronously stored data to file: {file_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error synchronously storing data for key {key}: {str(e)}")
+            return False
+    
+    def retrieve_sync(self, key: str) -> Optional[Any]:
+        """Synchronous version of retrieve method for use in Celery tasks"""
+        try:
+            file_path = self._get_file_path(key)
+            
+            if not file_path.exists():
+                return None
+                
+            with open(file_path, "r") as f:
+                content = f.read()
+                
+            # Try to parse as JSON, fallback to string
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                return content
+                
+        except Exception as e:
+            logger.error(f"Error synchronously retrieving data for key {key}: {str(e)}")
+            return None
 
     async def retrieve_json(self, key: str) -> Optional[Dict[str, Any]]:
         """Retrieve JSON data"""
         data = await self.retrieve(key)
+        if isinstance(data, dict):
+            return data
+        return None
+        
+    def store_json_sync(self, key: str, data: Dict[str, Any]) -> bool:
+        """Synchronous version of store_json method for use in Celery tasks"""
+        return self.store_sync(key, data)
+        
+    def retrieve_json_sync(self, key: str) -> Optional[Dict[str, Any]]:
+        """Synchronous version of retrieve_json method for use in Celery tasks"""
+        data = self.retrieve_sync(key)
         if isinstance(data, dict):
             return data
         return None

@@ -9,7 +9,7 @@ services:
       - ../storage:/app/storage
       - ../logs:/app/logs
     env_file:
-      - ./.env
+      - ../.env
     container_name: backend
     networks:
       - monitoring-network
@@ -42,6 +42,8 @@ services:
     volumes:
       - ../storage:/app/storage
       - ../logs:/app/logs
+    env_file:
+      - ../.env
     container_name: celery-worker
     networks:
       - monitoring-network

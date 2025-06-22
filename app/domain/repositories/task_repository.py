@@ -84,12 +84,33 @@ class TaskRepository(BaseRepository[GenerationTask]):
         return task
 
     async def save(self, entity: GenerationTask) -> GenerationTask:
-        """Save a task entity"""
+        """Save a task entity asynchronously"""
         try:
             key = self._get_key(entity.id)
             data = self._serialize_task(entity)
 
-            success = await self.storage.store_json(key, data)
+            success = await self.storage.store(key, data)
+            if not success:
+                raise RuntimeError(f"Failed to save task {entity.id}")
+
+            return entity
+        except Exception as e:
+            logger.error(f"Error saving task {entity.id}: {str(e)}")
+            raise RuntimeError(f"Failed to save task {entity.id}")
+            
+    def save_sync(self, entity: GenerationTask) -> GenerationTask:
+        """Save a task entity synchronously (for Celery tasks)"""
+        try:
+            key = self._get_key(entity.id)
+            data = self._serialize_task(entity)
+
+            # Check if the storage provider has sync methods
+            if hasattr(self.storage, 'store_sync'):
+                success = self.storage.store_sync(key, data)
+            else:
+                # Fallback to regular store (e.g., FileStorage doesn't have async methods)
+                success = self.storage.store(key, data)
+                
             if not success:
                 raise RuntimeError(f"Failed to save task {entity.id}")
 
@@ -113,6 +134,27 @@ class TaskRepository(BaseRepository[GenerationTask]):
 
         except Exception as e:
             logger.error(f"Error retrieving task {entity_id}: {str(e)}")
+            return None
+            
+    def get_by_id_sync(self, entity_id: UUID) -> Optional[GenerationTask]:
+        """Get task by ID synchronously (for Celery tasks)"""
+        try:
+            key = self._get_key(entity_id)
+            
+            # Check if storage provider has sync methods
+            if hasattr(self.storage, 'retrieve_json_sync'):
+                data = self.storage.retrieve_json_sync(key)
+            else:
+                # Fallback to regular retrieve_json
+                data = self.storage.retrieve_json(key)
+                
+            if data is None:
+                return None
+                
+            return self._deserialize_task(data)
+            
+        except Exception as e:
+            logger.error(f"Error retrieving task {entity_id} synchronously: {str(e)}")
             return None
 
     async def get_all(self) -> List[GenerationTask]:

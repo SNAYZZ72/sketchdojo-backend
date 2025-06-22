@@ -228,3 +228,65 @@ class OpenAIProvider(AIProvider):
             normalized_scenes.append(normalized)
 
         return normalized_scenes
+        
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
+    async def generate_chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        webtoon_context: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """Generate a chat completion from a series of messages"""
+        try:
+            # Prepare system message with webtoon context if available
+            system_content = "You are a creative and helpful assistant for a webtoon creation app."
+            
+            if webtoon_context:
+                system_content += "\n\nWebtoon context:\n"
+                system_content += json.dumps(webtoon_context, indent=2)
+                
+            # Prepare API call parameters
+            params = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_content},
+                    *messages  # Add all conversation messages
+                ],
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+            }
+            
+            # Add tools parameter if provided
+            if tools:
+                params["tools"] = tools
+                
+            # Call OpenAI API
+            response = await self.client.chat.completions.create(**params)
+            
+            # Extract and parse the response
+            result = {
+                "content": response.choices[0].message.content,
+                "finish_reason": response.choices[0].finish_reason,
+            }
+            
+            # Add tool calls if present
+            if hasattr(response.choices[0].message, "tool_calls") and response.choices[0].message.tool_calls:
+                tool_calls = []
+                for tool_call in response.choices[0].message.tool_calls:
+                    tool_calls.append({
+                        "id": tool_call.id,
+                        "name": tool_call.function.name,
+                        "arguments": json.loads(tool_call.function.arguments)
+                    })
+                result["tool_calls"] = tool_calls
+                
+            logger.info("Generated chat completion successfully")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error generating chat completion: {str(e)}")
+            raise

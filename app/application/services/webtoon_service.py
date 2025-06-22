@@ -24,10 +24,16 @@ class WebtoonService:
         self, title: str, description: str, art_style: str
     ) -> WebtoonDTO:
         """Create a new webtoon"""
-        webtoon = self.repository.create_webtoon(
-            title=title, description=description, art_style=art_style
+        from app.domain.entities.webtoon import Webtoon
+        
+        # Create a new webtoon entity directly
+        webtoon = Webtoon(
+            title=title,
+            description=description,
+            art_style=art_style
         )
 
+        # Save using the repository's save method
         saved_webtoon = await self.repository.save(webtoon)
         return self._to_dto(saved_webtoon)
 
@@ -137,3 +143,15 @@ class WebtoonService:
         full_html = f"{css_styles}\n{html_content}"
         
         return full_html
+
+
+# Factory function to get a WebtoonService instance
+def get_webtoon_service() -> WebtoonService:
+    """Get a configured WebtoonService instance"""
+    from app.domain.repositories.webtoon_repository import get_webtoon_repository
+    
+    # Initialize the repository
+    repository = get_webtoon_repository()
+    
+    # Create and return the service
+    return WebtoonService(repository)

@@ -78,9 +78,20 @@ def start_webtoon_generation_task(self, task_id: str, request_data: Dict[str, An
         except Exception as e:
             logger.error(f"Error accessing storage directory: {str(e)}")
         
-        # Always use file storage in the Celery task for consistency with API
-        logger.debug("Initializing file storage and task repository")
-        storage = FileStorage(storage_path)
+        # Use storage based on configuration
+        logger.debug(f"Initializing storage of type '{storage_type}' and task repository")
+        if storage_type == "file":
+            storage = FileStorage(storage_path)
+            logger.info(f"Using file storage at {storage_path}")
+        elif storage_type == "redis":
+            from app.infrastructure.storage.redis_provider import RedisProvider
+            redis_url = getattr(settings, "redis_url", os.environ.get("REDIS_URL", "redis://redis:6379/0"))
+            storage = RedisProvider(redis_url)
+            logger.info(f"Using Redis storage at {redis_url}")
+        else:
+            from app.infrastructure.storage.memory_storage import MemoryStorage
+            storage = MemoryStorage()
+            logger.warning("Using in-memory storage which is temporary and not persisted!")
         task_repo = TaskRepository(storage)
         
         # Check if task exists in storage before updating
@@ -101,14 +112,22 @@ def start_webtoon_generation_task(self, task_id: str, request_data: Dict[str, An
         # Update task status to IN_PROGRESS before starting
         task.status = TaskStatus.PROCESSING
         task.started_at = datetime.now(timezone.utc)
-        # Use asyncio.run to execute the coroutine in a sync context
-        asyncio.run(task_repo.save(task))
+        # Use synchronous methods for Redis operations in Celery tasks
+        try:
+            task_repo.save_sync(task)
+        except Exception as e:
+            logger.error(f"Error saving task {task_id}: {str(e)}")
+            raise RuntimeError(f"Failed to save task {task_id}: {str(e)}")
         logger.debug(f"Updated task {task_id} status to IN_PROGRESS")
         
         # Run the async generation in sync context
-        logger.debug(f"Starting async generation for task {task_id}")
-        result = asyncio.run(generate_webtoon_async(task_id, request_data))
-        logger.debug(f"Async generation completed for task {task_id}")
+        # Use the synchronous version of the generation function to avoid asyncio issues
+        try:
+            result = generate_webtoon_sync(task_id, request_data)
+            logger.debug(f"Synchronous generation completed for task {task_id}")
+        except Exception as e:
+            logger.error(f"Error in synchronous generation: {str(e)}")
+            raise
         
         # Double-check that task status is updated to COMPLETED
         task = asyncio.run(task_repo.get_by_id(task_id))
@@ -162,9 +181,9 @@ async def generate_webtoon_async(
 
     try:
         # Step 1: Initialize dependencies
-        await connection_manager.broadcast_generation_progress(
+        asyncio.run(connection_manager.broadcast_generation_progress(
             task_id, 10.0, "Initializing generation process..."
-        )
+        ))
 
         # Get services (in real implementation, properly initialize these)
         from app.application.dto.generation_dto import GenerationRequestDTO
@@ -183,24 +202,38 @@ async def generate_webtoon_async(
 
         # Initialize storage and repositories based on settings
         # Handle both storage_type (standard config) and storage_provider (docker settings)
-        storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "memory"))
+        storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "redis"))
+        
         if storage_type == "file":
             # Handle both file_storage_path (standard config) and storage_path (docker settings)
             storage_path = getattr(settings, "file_storage_path", getattr(settings, "storage_path", "./storage"))
             storage = FileStorage(storage_path)
+        elif storage_type == "redis":
+            # Use Redis storage
+            from app.infrastructure.storage.redis_provider import RedisProvider
+            redis_url = getattr(settings, "redis_url", os.environ.get("REDIS_URL", "redis://redis:6379/0"))
+            storage = RedisProvider(redis_url)
+            logger.info(f"Using Redis storage at {redis_url}")
         else:
+            # Fallback to memory storage only as last resort
             from app.infrastructure.storage.memory_storage import MemoryStorage
-            storage = MemoryStorage()            
+            storage = MemoryStorage()
+            logger.warning("Using in-memory storage which is temporary and not persisted!")
+            
         webtoon_repo = WebtoonRepository(storage)
         task_repo = TaskRepository(storage)
         
-        # Update task status to in-progress
-        task = await task_repo.get_by_id(task_id)
+        # Update task status to in-progress - use synchronous methods
+        task = task_repo.get_by_id_sync(task_id) if hasattr(task_repo, 'get_by_id_sync') else asyncio.run(task_repo.get_by_id(task_id))
         if task:
             task.status = TaskStatus.PROCESSING
             task.started_at = datetime.now(UTC)
             task.progress.current_operation = "Initializing generation process..."
-            await task_repo.save(task)
+            # Use synchronous save if available
+            if hasattr(task_repo, 'save_sync'):
+                task_repo.save_sync(task)
+            else:
+                asyncio.run(task_repo.save(task))
 
         # Initialize services directly without using dependency injection
         ai_provider = OpenAIProvider(
@@ -234,28 +267,29 @@ async def generate_webtoon_async(
         )
 
         # Step 2: Generate story
-        await connection_manager.broadcast_generation_progress(
+        asyncio.run(connection_manager.broadcast_generation_progress(
             task_id, 20.0, "Generating story structure..."
-        )
+        ))
 
         # Use helper function to ensure art_style is a valid string
         from app.domain.constants.art_styles import ensure_art_style_string
         art_style_str = ensure_art_style_string(request_dto.art_style)
         
-        story_data = await ai_provider.generate_story(
+        # Call AI provider methods with asyncio.run
+        story_data = asyncio.run(ai_provider.generate_story(
             request_dto.prompt,
             art_style_str,
             request_dto.additional_context,
-        )
+        ))
 
         # Step 3: Generate scenes
-        await connection_manager.broadcast_generation_progress(
+        asyncio.run(connection_manager.broadcast_generation_progress(
             task_id, 40.0, "Creating panel descriptions..."
-        )
+        ))
 
-        scenes_data = await ai_provider.generate_scene_descriptions(
+        scenes_data = asyncio.run(ai_provider.generate_scene_descriptions(
             story_data, request_dto.num_panels
-        )
+        ))
 
         # Step 4: Generate images
         total_panels = len(scenes_data)
@@ -263,34 +297,34 @@ async def generate_webtoon_async(
 
         for i, scene_data in enumerate(scenes_data):
             progress = 40.0 + (50.0 * (i + 1) / total_panels)
-            await connection_manager.broadcast_generation_progress(
+            asyncio.run(connection_manager.broadcast_generation_progress(
                 task_id,
                 progress,
                 f"Generating image for panel {i + 1}/{total_panels}...",
-            )
+            ))
 
             # Create enhanced prompt for image generation
             # We use the already converted art_style_str from earlier
             # No need to convert again
                 
-            enhanced_prompt = await ai_provider.enhance_visual_description(
+            enhanced_prompt = asyncio.run(ai_provider.enhance_visual_description(
                 scene_data.get("visual_description", ""),
                 art_style_str,
                 {"style": art_style_str},
-            )
+            ))
 
-            # Generate image
-            if image_generator.is_available():
+            # Generate image - check availability and generate synchronously
+            if asyncio.run(image_generator.is_available()):
                 try:
                     (
                         local_path,
                         public_url,
-                    ) = await image_generator.generate_image(
+                    ) = asyncio.run(image_generator.generate_image(
                         enhanced_prompt,
                         1024,
                         1024,
                         art_style_str,
-                    )
+                    ))
                     scene_data["image_url"] = public_url
                 except Exception as e:
                     logger.warning(f"Failed to generate image for panel {i}: {str(e)}")
@@ -301,7 +335,7 @@ async def generate_webtoon_async(
             generated_panels.append(scene_data)
 
             # Notify panel completion
-            await connection_manager.broadcast_task_update(
+            asyncio.run(connection_manager.broadcast_task_update(
                 task_id,
                 {
                     "panel_generated": {
@@ -310,12 +344,12 @@ async def generate_webtoon_async(
                         "image_url": scene_data.get("image_url"),
                     }
                 },
-            )
+            ))
 
         # Step 5: Finalize webtoon
-        await connection_manager.broadcast_generation_progress(
+        asyncio.run(connection_manager.broadcast_generation_progress(
             task_id, 95.0, "Finalizing webtoon..."
-        )
+        ))
 
         # Create webtoon entity and save with dynamically generated UUID
         webtoon_id = str(uuid4())
@@ -327,25 +361,108 @@ async def generate_webtoon_async(
             "story": story_data,
             "panel_count": len(generated_panels),
         }
+        
+        # Create an actual Webtoon entity and save it to the repository
+        try:
+            from app.domain.entities.webtoon import Webtoon
+            from app.domain.entities.panel import Panel, SpeechBubble
+            from app.domain.entities.scene import Scene
+            from app.domain.value_objects.dimensions import PanelDimensions, PanelSize
+            from app.domain.value_objects.position import Position
+            
+            # Create a new webtoon entity
+            webtoon = Webtoon(
+                id=UUID(webtoon_id),
+                title=story_data.get("title", "Generated Webtoon"),
+                description=story_data.get("description", ""),
+                art_style=art_style_str
+            )
+            
+            # Create and add panels to the webtoon
+            for i, panel_data in enumerate(generated_panels):
+                # Create scene object
+                scene = Scene(
+                    description=panel_data.get("visual_description", ""),
+                    setting=panel_data.get("setting", ""),
+                    time_of_day="day",  # Default values
+                    weather="clear",
+                    mood=panel_data.get("mood", ""),
+                    character_names=panel_data.get("characters", []),
+                    camera_angle=panel_data.get("camera_angle", "medium"),
+                    character_positions={},
+                    character_expressions={},
+                    actions=[],
+                    lighting="natural",
+                    composition_notes=""
+                )
+                
+                # Create panel with scene
+                panel = Panel(
+                    sequence_number=i + 1,
+                    scene=scene,
+                    dimensions=PanelDimensions(size=PanelSize.MEDIUM),
+                    image_url=panel_data.get("image_url", "")
+                )
+                
+                # Add speech bubbles if they exist
+                dialogue = panel_data.get("dialogue", [])
+                for j, dialogue_item in enumerate(dialogue):
+                    if isinstance(dialogue_item, dict) and "character" in dialogue_item and "text" in dialogue_item:
+                        bubble = SpeechBubble(
+                            character_name=dialogue_item["character"],
+                            text=dialogue_item["text"],
+                            position=Position(x_percent=50, y_percent=50, anchor="center")
+                        )
+                        panel.speech_bubbles.append(bubble)
+                
+                # Add special effects if they exist
+                panel.visual_effects = panel_data.get("special_effects", [])
+                
+                # Add panel to webtoon
+                webtoon.add_panel(panel)
+            
+            # Get the Redis-backed webtoon repository
+            webtoon_repository = get_webtoon_repository()
+            
+            # Save the webtoon entity to Redis using sync method if available
+            if hasattr(webtoon_repository, 'save_sync'):
+                webtoon_repository.save_sync(webtoon)
+            else:
+                asyncio.run(webtoon_repository.save(webtoon))
+            logger.info(f"Saved webtoon entity to repository with ID: {webtoon_id} and {len(webtoon.panels)} panels")
+        except Exception as webtoon_save_error:
+            logger.error(f"Failed to save webtoon entity: {str(webtoon_save_error)}", exc_info=True)
 
         # Step 6: Complete
-        await connection_manager.broadcast_generation_progress(
+        asyncio.run(connection_manager.broadcast_generation_progress(
             task_id, 100.0, "Generation completed!"
-        )
+        ))
 
         # Update task status in the database
-        # Initialize storage similar to how it's done in the exception handler
-        storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "memory"))
+        # Initialize storage with the same pattern as the main function
+        storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "redis"))
         if storage_type == "file":
             storage_path = getattr(settings, "file_storage_path", getattr(settings, "storage_path", "./storage"))
             from app.infrastructure.storage.file_storage import FileStorage
             storage = FileStorage(storage_path)
+        elif storage_type == "redis":
+            # Use Redis storage
+            from app.infrastructure.storage.redis_provider import RedisProvider
+            redis_url = getattr(settings, "redis_url", os.environ.get("REDIS_URL", "redis://redis:6379/0"))
+            storage = RedisProvider(redis_url)
+            logger.info(f"Using Redis storage for task update at {redis_url}")
         else:
             from app.infrastructure.storage.memory_storage import MemoryStorage
             storage = MemoryStorage()
+            logger.warning("Using in-memory storage for task update which is temporary!")
         
         task_repository = TaskRepository(storage)
-        task = await task_repository.get_by_id(task_id)
+        # Use synchronous method if available, otherwise wrap async call
+        if hasattr(task_repository, 'get_by_id_sync'):
+            task = task_repository.get_by_id_sync(task_id)
+        else:
+            task = asyncio.run(task_repository.get_by_id(task_id))
+            
         if task:
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.now(UTC)
@@ -353,11 +470,16 @@ async def generate_webtoon_async(
             task.progress.current_step = task.progress.total_steps
             task.progress.percentage = 100.0
             task.progress.current_operation = "Generation completed!"
-            await task_repository.save(task)
+            
+            # Use synchronous save method if available
+            if hasattr(task_repository, 'save_sync'):
+                task_repository.save_sync(task)
+            else:
+                asyncio.run(task_repository.save(task))
 
-        await connection_manager.broadcast_generation_completed(
+        asyncio.run(connection_manager.broadcast_generation_completed(
             task_id, result, webtoon_id=webtoon_id
-        )
+        ))
         
         # Fetch and broadcast HTML content
         try:
@@ -367,13 +489,13 @@ async def generate_webtoon_async(
             # Get webtoon service
             webtoon_service = get_webtoon_service()
             
-            # Fetch HTML content
-            html_content = await webtoon_service.get_webtoon_html_content(UUID(webtoon_id))
+            # Fetch HTML content - use asyncio.run since this is a synchronous function
+            html_content = asyncio.run(webtoon_service.get_webtoon_html_content(UUID(webtoon_id)))
             
             # Broadcast update if HTML content is available
             if html_content:
                 logger.info(f"Broadcasting HTML update for newly created webtoon: {webtoon_id}")
-                await connection_manager.broadcast_webtoon_updated(webtoon_id, html_content)
+                asyncio.run(connection_manager.broadcast_webtoon_updated(webtoon_id, html_content))
         except Exception as html_error:
             logger.error(f"Error fetching/broadcasting HTML content: {str(html_error)}", exc_info=True)
 
@@ -385,14 +507,21 @@ async def generate_webtoon_async(
         
         # Update task status in the database for failures
         # Initialize storage similar to the main function body
-        storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "memory"))
+        storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "redis"))
         if storage_type == "file":
             storage_path = getattr(settings, "file_storage_path", getattr(settings, "storage_path", "./storage"))
             from app.infrastructure.storage.file_storage import FileStorage
             error_storage = FileStorage(storage_path)
+        elif storage_type == "redis":
+            # Use Redis storage
+            from app.infrastructure.storage.redis_provider import RedisProvider
+            redis_url = getattr(settings, "redis_url", os.environ.get("REDIS_URL", "redis://redis:6379/0"))
+            error_storage = RedisProvider(redis_url)
+            logger.info(f"Using Redis storage for error handling at {redis_url}")
         else:
             from app.infrastructure.storage.memory_storage import MemoryStorage
             error_storage = MemoryStorage()
+            logger.warning("Using in-memory storage for error handling which is temporary!")
         
         task_repository = TaskRepository(error_storage)
         task = await task_repository.get_by_id(task_id)
@@ -463,9 +592,20 @@ def start_panel_generation_task(self, task_id: str, request_data: Dict[str, Any]
         # Log the storage configuration for debugging
         logger.debug(f"Using storage type: {storage_type} at path: {storage_path}")
         
-        # Always use file storage in the Celery task for consistency with API
-        logger.debug("Initializing file storage and task repository")
-        storage = FileStorage(storage_path)
+        # Use storage based on configuration
+        logger.debug(f"Initializing storage of type '{storage_type}' and task repository")
+        if storage_type == "file":
+            storage = FileStorage(storage_path)
+            logger.info(f"Using file storage at {storage_path}")
+        elif storage_type == "redis":
+            from app.infrastructure.storage.redis_provider import RedisProvider
+            redis_url = getattr(settings, "redis_url", os.environ.get("REDIS_URL", "redis://redis:6379/0"))
+            storage = RedisProvider(redis_url)
+            logger.info(f"Using Redis storage at {redis_url}")
+        else:
+            from app.infrastructure.storage.memory_storage import MemoryStorage
+            storage = MemoryStorage()
+            logger.warning("Using in-memory storage which is temporary and not persisted!")
         task_repo = TaskRepository(storage)
         
         # Check if task exists in storage before updating
@@ -557,7 +697,6 @@ def start_panel_generation_task(self, task_id: str, request_data: Dict[str, Any]
             
             # Notify clients of failure
             asyncio.run(notify_generation_failed(task_id, str(e)))
-            
             # Re-raise the exception for Celery to handle
             raise
             
@@ -573,9 +712,10 @@ def start_panel_generation_task(self, task_id: str, request_data: Dict[str, Any]
         raise
 
 
-async def generate_panel_async(task_id: str, request_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Async panel generation logic"""
-    logger.info(f"Starting async panel generation for task: {task_id}")
+def generate_webtoon_sync(task_id: str, request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Synchronous version of webtoon generation logic for Celery tasks"""
+    # We'll still use the async connection manager for WebSockets, but through asyncio.run
+    logger.info(f"Starting synchronous webtoon generation for task: {task_id}")
     
     connection_manager = get_connection_manager()
     
@@ -620,9 +760,9 @@ async def generate_panel_async(task_id: str, request_data: Dict[str, Any]) -> Di
         style_preferences = request_data.get("style_preferences", {})
         
         # Notify clients of panel detail generation
-        await connection_manager.broadcast_generation_progress(
+        asyncio.run(connection_manager.broadcast_generation_progress(
             task_id, 20.0, "Generating panel details..."
-        )
+        ))
         
         # Generate panel details using combination of existing methods
         panel_details = {}
@@ -630,11 +770,11 @@ async def generate_panel_async(task_id: str, request_data: Dict[str, Any]) -> Di
         # Generate dialogue using available method if we have character names
         if character_names:
             try:
-                dialogue = await ai_provider.generate_dialogue(
+                dialogue = asyncio.run(ai_provider.generate_dialogue(
                     scene_description=scene_description,
                     character_names=character_names,
                     mood=mood or "neutral"
-                )
+                ))
                 panel_details["dialogue"] = dialogue
             except Exception as e:
                 logger.warning(f"Failed to generate dialogue: {str(e)}")
@@ -649,20 +789,20 @@ async def generate_panel_async(task_id: str, request_data: Dict[str, Any]) -> Di
                 "style_preferences": style_preferences or {}
             }
             
-            enhanced_description = await ai_provider.enhance_visual_description(
+            enhanced_description = asyncio.run(ai_provider.enhance_visual_description(
                 base_description=scene_description,
                 art_style=art_style,
                 technical_specs=tech_specs
-            )
+            ))
             panel_details["visual_description"] = enhanced_description
         except Exception as e:
             logger.warning(f"Failed to enhance visual description: {str(e)}")
             panel_details["visual_description"] = scene_description
         
         # Update progress
-        await connection_manager.broadcast_generation_progress(
+        asyncio.run(connection_manager.broadcast_generation_progress(
             task_id, 50.0, "Generating panel image..."
-        )
+        ))
         
         # Generate image for the panel
         image_url = None
@@ -675,12 +815,12 @@ async def generate_panel_async(task_id: str, request_data: Dict[str, Any]) -> Di
                 enhanced_prompt += f" {' '.join([f'{k}: {v}' for k, v in style_preferences.items()])}"
                 
             # Generate the image
-            image_result = await image_generator.generate_image(
+            image_result = asyncio.run(image_generator.generate_image(
                 prompt=enhanced_prompt,
                 style=art_style,  # Using the correct parameter name 'style' instead of 'art_style'
                 width=1024,  # Default width, can be adjusted based on panel_size
                 height=768   # Default height, can be adjusted based on panel_size
-            )
+            ))
             
             # StabilityProvider.generate_image returns a tuple of (file_path, public_url)
             if image_result and len(image_result) == 2:
@@ -695,9 +835,9 @@ async def generate_panel_async(task_id: str, request_data: Dict[str, Any]) -> Di
             panel_details["image_url"] = None
         
         # Notify clients of panel completion
-        await connection_manager.broadcast_generation_progress(
+        asyncio.run(connection_manager.broadcast_generation_progress(
             task_id, 100.0, "Panel generation completed!"
-        )
+        ))
         
         # Prepare the result data
         result = {
@@ -706,7 +846,7 @@ async def generate_panel_async(task_id: str, request_data: Dict[str, Any]) -> Di
         }
         
         # Notify panel completion
-        await connection_manager.broadcast_task_update(
+        asyncio.run(connection_manager.broadcast_task_update(
             task_id,
             {
                 "panel_generated": {
@@ -714,7 +854,7 @@ async def generate_panel_async(task_id: str, request_data: Dict[str, Any]) -> Di
                     "image_url": image_url
                 }
             },
-        )
+        ))
         
         return result
         
@@ -731,11 +871,11 @@ async def generate_panel_async(task_id: str, request_data: Dict[str, Any]) -> Di
             task_repository = TaskRepository(storage)
         
         # Get the task and update its status
-        task = await task_repository.get_by_id(task_id)
+        task = task_repository.get_by_id_sync(task_id)
         if task:
             task.status = TaskStatus.FAILED
             task.error_message = str(e)
-            await task_repository.save(task)
+            task_repository.save_sync(task)
         
         # Re-raise the exception
         raise

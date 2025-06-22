@@ -27,11 +27,16 @@ class WebtoonRepository(BaseRepository[Webtoon]):
 
     def _serialize_webtoon(self, webtoon: Webtoon) -> dict:
         """Serialize webtoon entity to dictionary"""
+        # Handle art_style as either string or enum with value attribute
+        art_style = webtoon.art_style
+        if hasattr(art_style, 'value'):
+            art_style = art_style.value
+            
         return {
             "id": str(webtoon.id),
             "title": webtoon.title,
             "description": webtoon.description,
-            "art_style": webtoon.art_style.value,
+            "art_style": art_style,
             "created_at": webtoon.created_at.isoformat(),
             "updated_at": webtoon.updated_at.isoformat(),
             "is_published": webtoon.is_published,
@@ -258,29 +263,69 @@ class WebtoonRepository(BaseRepository[Webtoon]):
             raise
 
     async def save(self, entity: Webtoon) -> Webtoon:
-        """Save a webtoon entity"""
+        """Save a webtoon entity asynchronously"""
         try:
             key = self._get_key(entity.id)
             data = self._serialize_webtoon(entity)
-            success = await self.storage.store_json(key, data)
+            success = await self.storage.store(key, data)
             if not success:
                 raise RuntimeError(f"Failed to save webtoon {entity.id}")
-            logger.debug(f"Saved webtoon: {entity.id}")
+            logger.debug(f"Saved webtoon: {entity.id} asynchronously")
             return entity
         except Exception as e:
-            logger.error(f"Error saving webtoon {entity.id}: {str(e)}")
+            logger.error(f"Error saving webtoon {entity.id} asynchronously: {str(e)}")
+            raise
+            
+    def save_sync(self, entity: Webtoon) -> Webtoon:
+        """Save a webtoon entity synchronously (for Celery tasks)"""
+        try:
+            key = self._get_key(entity.id)
+            data = self._serialize_webtoon(entity)
+            
+            # Check if the storage provider has sync methods
+            if hasattr(self.storage, 'store_sync'):
+                success = self.storage.store_sync(key, data)
+            else:
+                # Fallback to regular store for non-async providers
+                success = self.storage.store(key, data)
+                
+            if not success:
+                raise RuntimeError(f"Failed to save webtoon {entity.id}")
+            logger.debug(f"Saved webtoon: {entity.id} synchronously")
+            return entity
+        except Exception as e:
+            logger.error(f"Error saving webtoon {entity.id} synchronously: {str(e)}")
             raise
 
     async def get_by_id(self, entity_id: UUID) -> Optional[Webtoon]:
-        """Get webtoon by ID"""
+        """Get webtoon by ID asynchronously"""
         try:
             key = self._get_key(entity_id)
-            data = await self.storage.retrieve_json(key)
+            data = await self.storage.retrieve(key)
             if data is None:
                 return None
             return self._deserialize_webtoon(data)
         except Exception as e:
-            logger.error(f"Error retrieving webtoon {entity_id}: {str(e)}")
+            logger.error(f"Error retrieving webtoon {entity_id} asynchronously: {str(e)}")
+            return None
+            
+    def get_by_id_sync(self, entity_id: UUID) -> Optional[Webtoon]:
+        """Get webtoon by ID synchronously (for Celery tasks)"""
+        try:
+            key = self._get_key(entity_id)
+            
+            # Check if the storage provider has sync methods
+            if hasattr(self.storage, 'retrieve_sync'):
+                data = self.storage.retrieve_sync(key)
+            else:
+                # Fallback to regular retrieve for non-async providers
+                data = self.storage.retrieve(key)
+                
+            if data is None:
+                return None
+            return self._deserialize_webtoon(data)
+        except Exception as e:
+            logger.error(f"Error retrieving webtoon {entity_id} synchronously: {str(e)}")
             return None
 
     async def get_all(self) -> List[Webtoon]:
@@ -336,3 +381,23 @@ class WebtoonRepository(BaseRepository[Webtoon]):
             if keyword_lower in w.title.lower()
             or keyword_lower in w.description.lower()
         ]
+
+
+# Factory function to get a WebtoonRepository instance
+def get_webtoon_repository() -> WebtoonRepository:
+    """Get a configured WebtoonRepository instance for background tasks
+    
+    This uses Redis directly for storage with no fallbacks
+    """
+    import os
+    from app.infrastructure.storage.redis_provider import RedisProvider
+    
+    # Get Redis URL directly from environment
+    redis_url = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
+    
+    # Create Redis provider and repository with no fallbacks
+    storage = RedisProvider(redis_url)
+    logger.info(f"WebtoonRepository using Redis storage at {redis_url}")
+    
+    # Create and return the repository
+    return WebtoonRepository(storage)

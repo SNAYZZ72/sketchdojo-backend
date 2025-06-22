@@ -10,7 +10,7 @@ from fastapi import FastAPI, Response
 from app.api.middleware.cors import setup_cors
 from app.api.middleware.logging import LoggingMiddleware
 from app.api.middleware.metrics import MetricsMiddleware
-from app.api.v1.routes import generation, health, tasks, webtoons, test
+from app.api.v1.routes import generation, health, tasks, webtoons, test, chat
 from app.config import get_settings
 from app.monitoring.logging_config import setup_logging
 from app.monitoring.metrics import get_metrics, get_metrics_content_type, setup_metrics
@@ -88,6 +88,11 @@ def create_app() -> FastAPI:
     )
     app.include_router(health.router, prefix="/health", tags=["health"])
     app.include_router(test.router, prefix=f"{settings.api_prefix}/test", tags=["test"])
+    app.include_router(
+        chat.router, 
+        prefix=f"{settings.api_prefix}", 
+        tags=["chat"]
+    )
 
     # Metrics endpoint
     @app.get("/metrics")
@@ -96,7 +101,7 @@ def create_app() -> FastAPI:
         return Response(content=get_metrics(), media_type=get_metrics_content_type())
 
     # WebSocket endpoint
-    from app.websocket.handlers.generation_handler import websocket_endpoint
+    from app.websocket.router import websocket_endpoint
 
     app.add_websocket_route("/ws", websocket_endpoint)
 

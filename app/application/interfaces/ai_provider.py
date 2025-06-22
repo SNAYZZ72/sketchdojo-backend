@@ -35,3 +35,12 @@ class AIProvider(ABC):
         technical_specs: Dict[str, Any],
     ) -> str:
         """Enhance a visual description for image generation"""
+        
+    @abstractmethod
+    async def generate_chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        webtoon_context: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """Generate a chat completion from a series of messages"""
