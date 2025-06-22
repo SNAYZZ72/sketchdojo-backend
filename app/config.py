@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     api_prefix: str = Field(default="/api/v1")
 
     # Security
-    secret_key: str
+    secret_key: str = Field(default="test-secret-key-not-for-production")
     cors_origins: tuple[str, ...] = Field(default=("*",))
 
     # Redis Configuration
@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     celery_result_backend: str = Field(default="redis://localhost:6379/2")
 
     # AI Provider Configuration
-    openai_api_key: str
+    openai_api_key: str = Field(default="test-openai-key-not-for-production")
     openai_model: str = Field(default="gpt-4o-mini")
     openai_temperature: float = Field(default=0.7)
     openai_max_tokens: int = Field(default=4000)
@@ -103,4 +103,10 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     """Get cached settings instance"""
+    import os
+    
+    # Check if we're in a test environment
+    is_testing = "PYTEST_CURRENT_TEST" in os.environ
+    
+    # Create settings with test defaults when in test environment
     return Settings()

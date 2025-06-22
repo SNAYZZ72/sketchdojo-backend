@@ -27,15 +27,12 @@ async def create_webtoon(
     service: WebtoonService = Depends(get_webtoon_service),
 ):
     """Create a new webtoon"""
-    try:
-        webtoon_dto = await service.create_webtoon(
-            title=request.title,
-            description=request.description,
-            art_style=request.art_style,
-        )
-        return WebtoonResponse.from_dto(webtoon_dto)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    webtoon_dto = await service.create_webtoon(
+        title=request.title,
+        description=request.description,
+        art_style=request.art_style,
+    )
+    return WebtoonResponse.from_dto(webtoon_dto)
 
 
 @router.get("/{webtoon_id}", response_model=WebtoonResponse)
@@ -47,7 +44,8 @@ async def get_webtoon(
     """Get a webtoon by ID"""
     webtoon_dto = await service.get_webtoon(webtoon_id)
     if not webtoon_dto:
-        raise HTTPException(status_code=404, detail="Webtoon not found")
+        from app.api.exception_handlers import NotFoundException
+        raise NotFoundException("Webtoon not found")
 
     # Create the response
     response = WebtoonResponse.from_dto(webtoon_dto)
@@ -55,6 +53,9 @@ async def get_webtoon(
     # Add HTML content if requested
     if include_html:
         html_content = await service.get_webtoon_html_content(webtoon_id)
+        if not html_content:
+            from app.api.exception_handlers import BadRequestException
+            raise BadRequestException("Failed to generate HTML content")
         response.html_content = html_content
         
     return response
@@ -66,83 +67,79 @@ async def list_webtoons(
     service: WebtoonService = Depends(get_webtoon_service),
 ):
     """List webtoons with optional search"""
-    try:
-        if keyword:
-            webtoons = await service.search_webtoons(keyword)
-        else:
-            # Get all webtoons (in production, add pagination)
-            webtoons = await service.get_all_webtoons()
+    if keyword:
+        webtoons = await service.search_webtoons(keyword)
+    else:
+        # Get all webtoons (in production, add pagination)
+        webtoons = await service.get_all_webtoons()
 
-        return WebtoonListResponse(
-            webtoons=[WebtoonResponse.from_dto(w) for w in webtoons],
-            total=len(webtoons),
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return WebtoonListResponse(
+        webtoons=[WebtoonResponse.from_dto(w) for w in webtoons],
+        total=len(webtoons),
+    )
 
 
-@router.post("/{webtoon_id}/characters")
+@router.post("/{webtoon_id}/characters", response_model=WebtoonResponse)
 async def add_character(
     webtoon_id: UUID,
     request: CharacterCreateRequest,
     service: WebtoonService = Depends(get_webtoon_service),
 ):
     """Add a character to a webtoon"""
-    from app.domain.entities.character import Character, CharacterAppearance
-
-    # Convert the Pydantic model to a dictionary using model_dump() (Pydantic v2)
+    # Convert the Pydantic model to a dictionary
     appearance_dict = request.appearance.model_dump()
-
-    character = Character(
+    
+    # Call the refactored service method with individual parameters
+    webtoon_dto = await service.add_character(
+        webtoon_id=webtoon_id,
         name=request.name,
         description=request.description,
-        appearance=CharacterAppearance(**appearance_dict),
+        appearance_data=appearance_dict,
         personality_traits=request.personality_traits,
-        role=request.role,
+        role=request.role
     )
-
-    webtoon_dto = await service.add_character(webtoon_id, character)
+    
     if not webtoon_dto:
-        raise HTTPException(status_code=404, detail="Webtoon not found")
+        from app.api.exception_handlers import NotFoundException
+        raise NotFoundException("Webtoon not found")
+    
+    # Return a consistent response model
+    return WebtoonResponse.from_dto(webtoon_dto)
 
-    return JSONResponse({"message": "Character added successfully"})
 
-
-@router.post("/{webtoon_id}/panels")
+@router.post("/{webtoon_id}/panels", response_model=WebtoonResponse)
 async def add_panel(
     webtoon_id: UUID,
     request: PanelCreateRequest,
     service: WebtoonService = Depends(get_webtoon_service),
 ):
     """Add a panel to a webtoon"""
-    from app.domain.entities.panel import Panel
-    from app.domain.entities.scene import Scene
-    from app.domain.value_objects.dimensions import PanelDimensions, PanelSize
-
-    scene = Scene(
-        description=request.scene_description,
+    # Call the refactored service method with individual parameters
+    webtoon_dto = await service.add_panel(
+        webtoon_id=webtoon_id,
+        scene_description=request.scene_description,
         character_names=request.character_names,
+        panel_size=request.panel_size
     )
-
-    panel = Panel(
-        scene=scene,
-        dimensions=PanelDimensions.from_size(PanelSize(request.panel_size)),
-    )
-
-    webtoon_dto = await service.add_panel(webtoon_id, panel)
+    
     if not webtoon_dto:
-        raise HTTPException(status_code=404, detail="Webtoon not found")
+        from app.api.exception_handlers import NotFoundException
+        raise NotFoundException("Webtoon not found")
+    
+    # Return a consistent response model
+    return WebtoonResponse.from_dto(webtoon_dto)
 
-    return JSONResponse({"message": "Panel added successfully"})
 
-
-@router.patch("/{webtoon_id}/publish")
+@router.patch("/{webtoon_id}/publish", response_model=WebtoonResponse)
 async def publish_webtoon(
     webtoon_id: UUID, service: WebtoonService = Depends(get_webtoon_service)
 ):
     """Publish a webtoon"""
     success = await service.publish_webtoon(webtoon_id)
     if not success:
-        raise HTTPException(status_code=404, detail="Webtoon not found")
-
-    return JSONResponse({"message": "Webtoon published successfully"})
+        from app.api.exception_handlers import NotFoundException
+        raise NotFoundException("Webtoon not found")
+    
+    # Get the updated webtoon to return a consistent response
+    webtoon_dto = await service.get_webtoon(webtoon_id)
+    return WebtoonResponse.from_dto(webtoon_dto)

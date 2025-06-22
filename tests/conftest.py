@@ -3,218 +3,197 @@
 Pytest configuration and fixtures
 """
 import asyncio
+import uuid
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import pytest_asyncio
+from pytest_asyncio import fixture as async_fixture
 
-from app.application.services.generation_service import GenerationService
-from app.application.services.webtoon_service import WebtoonService
-from app.config import Settings
-from app.domain.repositories.task_repository import TaskRepository
-from app.domain.repositories.webtoon_repository import WebtoonRepository
-from app.infrastructure.storage.memory_storage import MemoryStorage
+from app.domain.entities.chat import ChatMessage, ChatRoom, ToolCall
+from app.domain.entities.generation_task import GenerationTask, TaskProgress, TaskStatus, TaskType
+from app.domain.entities.webtoon import Webtoon
+from app.domain.entities.character import Character
+from app.domain.entities.panel import Panel
+from app.domain.mappers.chat_mapper import ChatDataMapper
+from app.domain.mappers.task_mapper import TaskDataMapper
+from app.domain.mappers.webtoon_mapper import WebtoonDataMapper
 
 
-@pytest.fixture(scope="session")
+class MockStorageProvider:
+    """Mock storage provider for testing repositories"""
+    
+    def __init__(self):
+        self.store_data = {}
+        self.store = AsyncMock(return_value=True)
+        self.retrieve = AsyncMock(return_value=None)
+        self.delete = AsyncMock(return_value=True)
+        self.exists = AsyncMock(return_value=True)
+        self.list_keys = AsyncMock(return_value=[])
+        self.list_pattern = AsyncMock(return_value=[])
+        self.add_to_list = AsyncMock(return_value=True)
+        self.get_list = AsyncMock(return_value=[])
+
+
+@pytest.fixture
+def mock_storage():
+    """Return a mock storage provider"""
+    return MockStorageProvider()
+
+
+@pytest.fixture
+def webtoon_mapper():
+    """Return a real WebtoonDataMapper instance"""
+    return WebtoonDataMapper()
+
+
+@pytest.fixture
+def task_mapper():
+    """Return a real TaskDataMapper instance"""
+    return TaskDataMapper()
+
+
+@pytest.fixture
+def chat_mapper():
+    """Return a real ChatDataMapper instance"""
+    return ChatDataMapper()
+
+
+@pytest.fixture
+def mock_webtoon_mapper():
+    """Return a mock WebtoonDataMapper"""
+    mapper = MagicMock(spec=WebtoonDataMapper)
+    return mapper
+
+
+@pytest.fixture
+def mock_task_mapper():
+    """Return a mock TaskDataMapper"""
+    mapper = MagicMock(spec=TaskDataMapper)
+    return mapper
+
+
+@pytest.fixture
+def mock_chat_mapper():
+    """Return a mock ChatDataMapper"""
+    mapper = MagicMock(spec=ChatDataMapper)
+    return mapper
+
+
+@pytest.fixture
+def sample_webtoon():
+    """Return a sample Webtoon entity"""
+    webtoon_id = uuid.uuid4()
+    character_id = uuid.uuid4()
+    panel_id = uuid.uuid4()
+    
+    character = Character(
+        id=character_id,
+        name="Test Character",
+        description="A test character",
+        personality=["brave", "smart"],
+        backstory="A long time ago...",
+        image_url="http://example.com/character.jpg",
+    )
+    
+    panel = Panel(
+        id=panel_id,
+        sequence_number=1,
+        description="Test panel",
+        image_url="http://example.com/panel.jpg",
+        character_ids=[character_id],
+        dialogue=[{"character_id": str(character_id), "text": "Hello world!"}],
+    )
+    
+    return Webtoon(
+        id=webtoon_id,
+        title="Test Webtoon",
+        description="A test webtoon",
+        art_style="webtoon",
+        panels=[panel],
+        characters=[character],
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        is_published=False,
+        metadata={"tags": ["test", "sample"]},
+    )
+
+
+@pytest.fixture
+def sample_task():
+    """Return a sample GenerationTask entity"""
+    task_id = uuid.uuid4()
+    
+    progress = TaskProgress(
+        current_step=2,
+        total_steps=5,
+        current_operation="Processing scene data",
+        percentage=40,
+    )
+    
+    return GenerationTask(
+        id=task_id,
+        task_type=TaskType.GENERATE_STORY,
+        status=TaskStatus.IN_PROGRESS,
+        progress=progress,
+        created_at=datetime.now(),
+        started_at=datetime.now(),
+        completed_at=None,
+        error_message=None,
+        result={"partial_data": "Some partial results"},
+        input_data={"title": "Test Story", "theme": "adventure"},
+        metadata={"user_id": "user123", "priority": "high"},
+    )
+
+
+@pytest.fixture
+def sample_chat_message():
+    """Return a sample ChatMessage entity"""
+    message_id = uuid.uuid4()
+    webtoon_id = uuid.uuid4()
+    
+    tool_call = ToolCall(
+        id="call_123",
+        name="test_tool",
+        arguments={"param1": "value1", "param2": "value2"},
+        status="completed",
+        result={"success": True, "data": "result data"},
+        error=None,
+    )
+    
+    return ChatMessage(
+        id=message_id,
+        webtoon_id=webtoon_id,
+        client_id="client123",
+        role="user",
+        content="Hello, this is a test message",
+        timestamp=datetime.now(),
+        message_id="msg123",
+        tool_calls=[tool_call],
+        metadata={"source": "web", "session": "session123"},
+    )
+
+
+@pytest.fixture
+def sample_chat_room():
+    """Return a sample ChatRoom entity"""
+    room_id = uuid.uuid4()
+    webtoon_id = uuid.uuid4()
+    
+    return ChatRoom(
+        id=room_id,
+        webtoon_id=webtoon_id,
+        name="Test Chat Room",
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        metadata={"creator": "user123", "participants": ["user1", "user2"]},
+    )
+
+
+# Configure pytest to handle asyncio
+@pytest.fixture(scope='session')
 def event_loop():
-    """Create an instance of the default event loop for the test session."""
+    """Create an instance of the default event loop for each test case."""
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
-
-
-@pytest.fixture
-def test_settings():
-    """Test settings configuration"""
-    return Settings(
-        environment="test",
-        debug=True,
-        redis_url="redis://localhost:6379/15",
-        celery_broker_url="redis://localhost:6379/15",
-        celery_result_backend="redis://localhost:6379/15",
-        openai_api_key="test-key",
-        secret_key="test-secret",
-        log_level="DEBUG",
-    )
-
-
-@pytest_asyncio.fixture
-async def memory_storage():
-    """In-memory storage for testing"""
-    storage = MemoryStorage()
-    yield storage
-    storage.clear_all()
-
-
-@pytest_asyncio.fixture
-async def webtoon_repository(memory_storage):
-    """Webtoon repository with memory storage"""
-    return WebtoonRepository(memory_storage)
-
-
-@pytest_asyncio.fixture
-async def task_repository(memory_storage):
-    """Task repository with memory storage"""
-    return TaskRepository(memory_storage)
-
-
-@pytest_asyncio.fixture
-async def webtoon_service(webtoon_repository):
-    """Webtoon service for testing"""
-    return WebtoonService(webtoon_repository)
-
-
-@pytest.fixture
-def mock_ai_provider():
-    """Mock AI provider for testing"""
-    ai_provider = AsyncMock()
-
-    # Mock story generation
-    ai_provider.generate_story.return_value = {
-        "title": "Test Story",
-        "plot_summary": "A test story for unit testing",
-        "setting": {"location": "Test City", "time_period": "Modern"},
-        "main_characters": [
-            {
-                "name": "Test Hero",
-                "description": "Brave protagonist",
-                "role": "protagonist",
-            }
-        ],
-        "theme": "Adventure",
-        "mood": "Exciting",
-        "key_scenes": ["Opening scene", "Conflict", "Resolution"],
-    }
-
-    # Create scene descriptions template
-    scene_templates = [
-        {
-            "visual_description": "Hero standing in the city",
-            "characters": ["Test Hero"],
-            "dialogue": [{"character": "Test Hero", "text": "Let's begin!"}],
-            "setting": "City street",
-            "mood": "determined",
-            "panel_size": "full",
-            "camera_angle": "medium",
-            "special_effects": [],
-        },
-        {
-            "visual_description": "Hero confronts the villain",
-            "characters": ["Test Hero", "Villain"],
-            "dialogue": [{"character": "Test Hero", "text": "I will stop you!"}],
-            "setting": "Dark alley",
-            "mood": "tense",
-            "panel_size": "half",
-            "camera_angle": "low",
-            "special_effects": [],
-        },
-        {
-            "visual_description": "Epic battle scene",
-            "characters": ["Test Hero", "Villain"],
-            "dialogue": [{"character": "Test Hero", "text": "For justice!"}],
-            "setting": "City rooftop",
-            "mood": "action",
-            "panel_size": "full",
-            "camera_angle": "wide",
-            "special_effects": ["explosion"],
-        },
-        {
-            "visual_description": "Victory celebration",
-            "characters": ["Test Hero", "Citizens"],
-            "dialogue": [{"character": "Test Hero", "text": "Peace is restored!"}],
-            "setting": "City square",
-            "mood": "triumphant",
-            "panel_size": "full",
-            "camera_angle": "high",
-            "special_effects": ["sunset"],
-        },
-    ]
-
-    # Make generate_scene_descriptions dynamic based on requested panel count
-    def mock_generate_scenes(*args, **kwargs):
-        # The method is called with positional args: generate_scene_descriptions(story_data, num_panels)
-        # If called with positional args
-        if len(args) >= 2:
-            story_data = args[0]
-            num_panels = args[1]
-        # If called with keyword args
-        else:
-            story_data = kwargs.get("story_data", {})
-            num_panels = kwargs.get("num_panels", 4)  # Default to 4 if not specified
-
-        # Return only the requested number of panels
-        return scene_templates[:num_panels]
-
-    # Set up the mock to use our dynamic function
-    ai_provider.generate_scene_descriptions = AsyncMock(
-        side_effect=mock_generate_scenes
-    )
-
-    # Mock dialogue generation
-    ai_provider.generate_dialogue.return_value = [
-        {"character": "Test Hero", "text": "Hello, world!"}
-    ]
-
-    # Mock visual enhancement
-    ai_provider.enhance_visual_description.return_value = "Enhanced visual description"
-
-    return ai_provider
-
-
-@pytest.fixture
-def mock_image_generator():
-    """Mock image generator for testing"""
-    image_gen = AsyncMock()
-    # Use a regular MagicMock for synchronous methods
-    image_gen.is_available = MagicMock(return_value=True)
-    # For async methods, use AsyncMock with proper return values
-    async_generate_mock = AsyncMock()
-    async_generate_mock.return_value = (
-        "/path/to/test/image.png",
-        "http://localhost:8000/static/test_image.png",
-    )
-    image_gen.generate_image = async_generate_mock
-
-    async_enhance_mock = AsyncMock()
-    async_enhance_mock.return_value = "Enhanced prompt"
-    image_gen.enhance_prompt = async_enhance_mock
-    return image_gen
-
-
-@pytest_asyncio.fixture
-async def generation_service(
-    mock_ai_provider, mock_image_generator, webtoon_repository, task_repository
-):
-    """Generation service with mocked dependencies"""
-    return GenerationService(
-        ai_provider=mock_ai_provider,
-        image_generator=mock_image_generator,
-        webtoon_repository=webtoon_repository,
-        task_repository=task_repository,
-    )
-
-
-@pytest.fixture
-def sample_webtoon_data():
-    """Sample webtoon data for testing"""
-    return {
-        "title": "Test Webtoon",
-        "description": "A test webtoon for unit testing",
-        "art_style": "webtoon",
-    }
-
-
-@pytest.fixture
-def sample_generation_request():
-    """Sample generation request data"""
-    from app.application.dto.generation_dto import GenerationRequestDTO
-    from app.domain.value_objects.style import ArtStyle
-
-    return GenerationRequestDTO(
-        prompt="Create a story about a brave hero in a magical world",
-        art_style=ArtStyle.WEBTOON,
-        num_panels=4,
-        character_descriptions=["Brave hero with sword"],
-        additional_context="Should be family-friendly",
-    )

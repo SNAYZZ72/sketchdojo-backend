@@ -13,8 +13,8 @@ class BaseRepository(Generic[T], ABC):
     """Abstract base repository for CRUD operations"""
 
     @abstractmethod
-    async def create(self, entity: T) -> T:
-        """Create a new entity"""
+    async def save(self, entity: T) -> T:
+        """Save an entity (create or update)"""
 
     @abstractmethod
     async def get_by_id(self, entity_id: UUID) -> Optional[T]:
@@ -25,9 +25,13 @@ class BaseRepository(Generic[T], ABC):
         """Get all entities with optional pagination and filtering"""
 
     @abstractmethod
-    async def update(self, entity_id: UUID, data: Dict[str, Any]) -> Optional[T]:
-        """Update an entity"""
+    async def update_fields(self, entity_id: UUID, data: Dict[str, Any]) -> Optional[T]:
+        """Update specific fields of an entity"""
 
     @abstractmethod
     async def delete(self, entity_id: UUID) -> bool:
         """Delete an entity"""
+
+    @abstractmethod
+    async def exists(self, entity_id: UUID) -> bool:
+        """Check if entity exists"""

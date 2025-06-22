@@ -2,6 +2,7 @@
 """
 Prompt templates for AI interactions
 """
+import json
 from typing import Any, Dict, List, Optional
 
 
@@ -136,3 +137,13 @@ Technical specifications: {specs_text}
 
 Enhance this description for AI image generation, adding artistic and technical details while preserving the core visual concept.
 """
+        
+    def get_chat_system_prompt(self, webtoon_context: Optional[Dict[str, Any]] = None) -> str:
+        """Get system prompt for chat completions with optional webtoon context"""
+        system_content = "You are a creative and helpful assistant for a webtoon creation app."
+        
+        if webtoon_context:
+            system_content += "\n\nWebtoon context:\n"
+            system_content += json.dumps(webtoon_context, indent=2)
+            
+        return system_content

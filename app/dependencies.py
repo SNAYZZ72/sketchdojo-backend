@@ -21,9 +21,10 @@ from app.domain.repositories.webtoon_repository import WebtoonRepository
 from app.infrastructure.ai.openai_provider import OpenAIProvider
 from app.infrastructure.cache.redis_cache import RedisCache
 from app.infrastructure.image.stability_provider import StabilityProvider
-from app.infrastructure.repositories.chat_repository_redis import get_chat_repository
+from app.infrastructure.repositories.chat_repository_redis import ChatRepositoryRedis
 from app.websocket.handlers.chat_handler import ChatHandler
 from app.infrastructure.storage.file_storage import FileStorage
+from app.utils.webtoon_renderer import WebtoonRenderer
 
 
 def get_redis_client(
@@ -81,21 +82,29 @@ def get_webtoon_repository(
     storage: StorageProvider = Depends(get_storage_provider),
 ) -> WebtoonRepository:
     """Get webtoon repository instance"""
-    return WebtoonRepository(storage)
+    from app.domain.mappers.webtoon_mapper import WebtoonDataMapper
+    return WebtoonRepository(storage, mapper=WebtoonDataMapper())
 
 
 def get_task_repository(
     storage: StorageProvider = Depends(get_storage_provider),
 ) -> TaskRepository:
     """Get task repository instance"""
-    return TaskRepository(storage)
+    from app.domain.mappers.task_mapper import TaskDataMapper
+    return TaskRepository(storage, mapper=TaskDataMapper())
+
+
+def get_webtoon_renderer() -> WebtoonRenderer:
+    """Get webtoon renderer instance"""
+    return WebtoonRenderer()
 
 
 def get_webtoon_service(
     repository: WebtoonRepository = Depends(get_webtoon_repository),
+    renderer: WebtoonRenderer = Depends(get_webtoon_renderer),
 ) -> WebtoonService:
     """Get webtoon service instance"""
-    return WebtoonService(repository)
+    return WebtoonService(repository=repository, renderer=renderer)
 
 
 def get_scene_service(
@@ -139,50 +148,64 @@ async def get_chat_repository_dep(
     storage: StorageProvider = Depends(get_redis_storage_provider),
 ) -> ChatRepository:
     """Get chat repository instance"""
-    return await get_chat_repository(storage)
+    return ChatRepositoryRedis(storage=storage)
 
 
 async def get_chat_service(
     repository: ChatRepository = Depends(get_chat_repository_dep),
     ai_provider: AIProvider = Depends(get_ai_provider),
+    webtoon_repository: WebtoonRepository = Depends(get_webtoon_repository),
 ) -> ChatService:
-    """Get chat service instance"""
-    return ChatService(repository, ai_provider)
+    """Get chat service instance with all required dependencies"""
+    return ChatService(repository, ai_provider, webtoon_repository)
 
 
-# Global chat handler instance for dependency injection
-_chat_handler = None
+# Dependency factory for ChatHandler
+class ChatHandlerFactory:
+    """Factory for creating ChatHandler instances"""
+    _instance = None
+    
+    @classmethod
+    def get_instance(cls):
+        """Get singleton factory instance"""
+        if cls._instance is None:
+            cls._instance = ChatHandlerFactory()
+        return cls._instance
+    
+    def __init__(self):
+        self._handler = None
+        
+    def get_handler(self, chat_service: ChatService = None) -> ChatHandler:
+        """Get or create a ChatHandler instance"""
+        if self._handler is None:
+            self._handler = ChatHandler(chat_service)
+        elif chat_service and not self._handler.chat_service:
+            # Upgrade existing handler with chat service if needed
+            self._handler.chat_service = chat_service
+        return self._handler
 
 
 def get_chat_handler_dep(
     chat_service: ChatService = Depends(get_chat_service),
 ) -> ChatHandler:
     """Get chat handler instance with proper dependency injection"""
-    global _chat_handler
-    if _chat_handler is None:
-        _chat_handler = ChatHandler(chat_service)
-    elif chat_service and not _chat_handler.chat_service:
-        # Upgrade existing handler with chat service if needed
-        _chat_handler.chat_service = chat_service
-    return _chat_handler
+    return ChatHandlerFactory.get_instance().get_handler(chat_service)
 
 
 async def get_chat_handler_for_websocket() -> ChatHandler:
     """Get chat handler instance directly for WebSocket use"""
-    global _chat_handler
-    # Initialize if needed
-    if _chat_handler is None:
+    # Only create dependencies if handler doesn't exist or lacks chat service
+    factory = ChatHandlerFactory.get_instance()
+    handler = factory.get_handler()
+    
+    if not handler.chat_service:
         # Get chat service manually
         storage_provider = get_redis_storage_provider(get_settings())
-        chat_repo = await get_chat_repository(storage_provider)
+        chat_repo = ChatRepositoryRedis(storage=storage_provider)
         ai_provider = get_ai_provider(get_settings())
-        chat_service = ChatService(chat_repo, ai_provider)
-        _chat_handler = ChatHandler(chat_service)
-    # Make sure chat service is set    
-    if not _chat_handler.chat_service:
-        # Get chat service manually
-        storage_provider = get_redis_storage_provider(get_settings())
-        chat_repo = await get_chat_repository(storage_provider)
-        ai_provider = get_ai_provider(get_settings())
-        _chat_handler.chat_service = ChatService(chat_repo, ai_provider)
-    return _chat_handler
+        webtoon_repo = get_webtoon_repository(storage_provider)
+        chat_service = ChatService(chat_repo, ai_provider, webtoon_repo)
+        # Update handler with service
+        handler.chat_service = chat_service
+        
+    return handler

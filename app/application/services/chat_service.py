@@ -11,17 +11,120 @@ from uuid import UUID, uuid4
 from app.application.interfaces.ai_provider import AIProvider
 from app.domain.entities.chat import ChatMessage, ChatRoom, ToolCall
 from app.domain.repositories.chat_repository import ChatRepository
-from app.websocket.handlers.tool_handler import get_tool_handler, Tool
+from app.domain.repositories.webtoon_repository import WebtoonRepository
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+class SystemPromptProvider:
+    """Provider for system prompts used in AI interactions"""
+    
+    @staticmethod
+    def get_chat_system_prompt() -> str:
+        """Get the system prompt for webtoon chat interactions"""
+        settings = get_settings()
+        # Use settings-based system prompt if available
+        if hasattr(settings, "chat_system_prompt") and settings.chat_system_prompt:
+            return settings.chat_system_prompt
+            
+        # Default system prompt
+        return """You are a creative and helpful assistant for a webtoon creation app. 
+Your task is to help users create and edit their webtoons by generating panels, 
+characters, dialogue, and more. When the user asks you to modify the webtoon, 
+always use the appropriate tools rather than just describing what could be done.
+
+Guidelines:
+1. When asked to create or modify webtoon content, ALWAYS use available tools.
+2. Be specific and detailed when providing parameters to tools.
+3. Explain what you're doing in a friendly, conversational manner.
+4. If you need to perform multiple actions, do them one at a time, explaining each step.
+5. When asked about the webtoon's current state, refer to the context provided."""
+
+
+class ToolProvider:
+    """Provider for tools that can be used in AI interactions"""
+    
+    @staticmethod
+    def get_available_tools() -> List[Dict]:
+        """Get the tools available for the AI to use"""
+        from app.websocket.handlers.tool_handler import get_tool_handler
+        
+        # Get all tools from the tool handler
+        tool_handler = get_tool_handler()
+        available_tools = tool_handler.tool_registry.list_tools()
+        
+        # Filter out tools that aren't relevant for the AI
+        excluded_tools = ["echo", "weather"]
+        filtered_tools = [tool for tool in available_tools if tool["tool_id"] not in excluded_tools]
+        
+        return filtered_tools
+        
+    @staticmethod
+    def format_tools_for_ai_provider(tools: List[Dict]) -> List[Dict]:
+        """Format tools in a structure suitable for the AI provider"""
+        formatted_tools = []
+        for tool in tools:
+            formatted_tools.append({
+                "type": "function",
+                "function": {
+                    "name": tool["name"].lower().replace(" ", "_"),
+                    "description": tool["description"],
+                    "parameters": tool["parameters"]
+                }
+            })
+        return formatted_tools
+
+
+class ChatMessageFormatter:
+    """Formats chat messages for AI provider interactions"""
+    
+    @staticmethod
+    def format_messages_for_ai_provider(messages: List[ChatMessage]) -> List[Dict]:
+        """Format chat messages for the AI provider"""
+        formatted_messages = []
+        
+        for msg in messages:
+            # First add the message
+            message_content = {
+                "role": msg.role,
+                "content": msg.content
+            }
+            
+            # If message has tool calls, add them
+            if msg.tool_calls and msg.role == "assistant":
+                message_content["tool_calls"] = [{
+                    "id": tc.id,
+                    "name": tc.name,
+                    "arguments": json.dumps(tc.arguments) if isinstance(tc.arguments, dict) else tc.arguments
+                } for tc in msg.tool_calls]
+            
+            # Add the main message first
+            formatted_messages.append(message_content)
+            
+            # Then add any tool results as separate function messages AFTER the assistant message
+            if msg.tool_calls and msg.role == "assistant":
+                tool_results = [tc for tc in msg.tool_calls if tc.status == "succeeded" and tc.result]
+                for tc in tool_results:
+                    formatted_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps(tc.result) if isinstance(tc.result, dict) else tc.result
+                    })
+                    
+        return formatted_messages
 
 
 class ChatService:
     """Service for chat business operations"""
 
-    def __init__(self, repository: ChatRepository, ai_provider: Optional[AIProvider] = None):
+    def __init__(self, 
+                repository: ChatRepository, 
+                ai_provider: Optional[AIProvider] = None,
+                webtoon_repository: Optional[WebtoonRepository] = None):
         self.repository = repository
         self.ai_provider = ai_provider
+        self.webtoon_repository = webtoon_repository
 
     async def create_message(
         self,
@@ -136,83 +239,32 @@ class ChatService:
             history = await self.repository.get_by_webtoon_id(webtoon_id, limit=limit)
             
             if not history:
-                logger.info(f"No chat history found for webtoon {webtoon_id}, but will use system message and context")
+                logger.info(f"No chat history found for webtoon {webtoon_id}, using system message and context")
             
             # Get webtoon details for context
             webtoon_context = await self._get_webtoon_context(webtoon_id)
-                
+            
             # Format messages for AI provider
-            formatted_messages = []
-            for msg in history:
-                # First add the message
-                message_content = {
-                    "role": msg.role,
-                    "content": msg.content
-                }
-                
-                # If message has tool calls, add them
-                if msg.tool_calls and msg.role == "assistant":
-                    message_content["tool_calls"] = [{
-                        "id": tc.id,
-                        "name": tc.name,
-                        "arguments": json.dumps(tc.arguments) if isinstance(tc.arguments, dict) else tc.arguments
-                    } for tc in msg.tool_calls]
-                
-                # Add the main message first
-                formatted_messages.append(message_content)
-                
-                # Then add any tool results as separate function messages AFTER the assistant message
-                if msg.tool_calls and msg.role == "assistant":
-                    tool_results = [tc for tc in msg.tool_calls if tc.status == "succeeded" and tc.result]
-                    for tc in tool_results:
-                        formatted_messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": json.dumps(tc.result) if isinstance(tc.result, dict) else tc.result
-                        })
-                
-            # Fetch available tools from the tool handler
-            tool_handler = get_tool_handler()
-            available_tools = tool_handler.tool_registry.list_tools()
+            formatted_messages = ChatMessageFormatter.format_messages_for_ai_provider(history)
             
-            # Convert tools to the format expected by OpenAI
-            openai_tools = []
-            for tool in available_tools:
-                # Only include webtoon-related tools, not debug tools
-                if tool["tool_id"] not in ["echo", "weather"]:
-                    openai_tools.append({
-                        "type": "function",
-                        "function": {
-                            "name": tool["name"].lower().replace(" ", "_"),
-                            "description": tool["description"],
-                            "parameters": tool["parameters"]
-                        }
-                    })
+            # Get available tools
+            available_tools = ToolProvider.get_available_tools()
+            formatted_tools = ToolProvider.format_tools_for_ai_provider(available_tools)
             
-            logger.info(f"Calling AI provider with {len(openai_tools)} tools and {len(formatted_messages)} messages")
+            logger.info(f"Calling AI provider with {len(formatted_tools)} tools and {len(formatted_messages)} messages")
             
             # Add system message with instructions for the agent
+            system_prompt = SystemPromptProvider.get_chat_system_prompt()
             formatted_messages.insert(0, {
                 "role": "system",
-                "content": """You are a creative and helpful assistant for a webtoon creation app. 
-                Your task is to help users create and edit their webtoons by generating panels, 
-                characters, dialogue, and more. When the user asks you to modify the webtoon, 
-                always use the appropriate tools rather than just describing what could be done.
-                
-                Guidelines:
-                1. When asked to create or modify webtoon content, ALWAYS use available tools.
-                2. Be specific and detailed when providing parameters to tools.
-                3. Explain what you're doing in a friendly, conversational manner.
-                4. If you need to perform multiple actions, do them one at a time, explaining each step.
-                5. When asked about the webtoon's current state, refer to the context provided.
-                """
+                "content": system_prompt
             })
             
             # Generate completion with tools
             response = await self.ai_provider.generate_chat_completion(
                 messages=formatted_messages,
                 webtoon_context=webtoon_context,
-                tools=openai_tools
+                tools=formatted_tools
             )
             
             # Create and persist assistant message from AI response
@@ -316,24 +368,43 @@ class ChatService:
         Returns:
             Dict containing webtoon context information
         """
-        # This would ideally fetch the webtoon details from a repository
-        # For now, just return the webtoon ID as context
-        # In a real implementation, this would include story details, characters, etc.
-        return {
-            "webtoon_id": str(webtoon_id),
-        }
+        context = {"webtoon_id": str(webtoon_id)}
+        
+        # If we have a webtoon repository, fetch more detailed information
+        if self.webtoon_repository:
+            try:
+                webtoon = await self.webtoon_repository.get_by_id(webtoon_id)
+                if webtoon:
+                    context.update({
+                        "title": webtoon.title,
+                        "description": webtoon.description,
+                        "genre": webtoon.genre,
+                        "style": webtoon.style.name if webtoon.style else "default",
+                        "character_count": len(webtoon.characters) if hasattr(webtoon, "characters") else 0,
+                        "scene_count": len(webtoon.scenes) if hasattr(webtoon, "scenes") else 0
+                    })
+            except Exception as e:
+                logger.warning(f"Error getting webtoon context: {str(e)}")
+                # Continue with basic context
+        
+        return context
 
 
 # Factory function to get a ChatService instance
-async def get_chat_service(repository: ChatRepository, ai_provider: Optional[AIProvider] = None) -> ChatService:
+async def get_chat_service(
+    repository: ChatRepository, 
+    ai_provider: Optional[AIProvider] = None,
+    webtoon_repository: Optional[WebtoonRepository] = None
+) -> ChatService:
     """
     Get a configured ChatService instance
     
     Args:
         repository: The chat repository to use
         ai_provider: Optional AI provider for generating responses
+        webtoon_repository: Optional repository for accessing webtoon data
         
     Returns:
         ChatService instance
     """
-    return ChatService(repository, ai_provider)
+    return ChatService(repository, ai_provider, webtoon_repository)

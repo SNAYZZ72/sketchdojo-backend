@@ -10,6 +10,7 @@ from fastapi import FastAPI, Response
 from app.api.middleware.cors import setup_cors
 from app.api.middleware.logging import LoggingMiddleware
 from app.api.middleware.metrics import MetricsMiddleware
+from app.api.exception_handlers import add_exception_handlers
 from app.api.v1.routes import generation, health, tasks, webtoons, test, chat
 from app.config import get_settings
 from app.monitoring.logging_config import setup_logging
@@ -66,6 +67,9 @@ def create_app() -> FastAPI:
 
     # Setup CORS
     setup_cors(app, settings)
+    
+    # Register exception handlers
+    add_exception_handlers(app)
 
     # Add custom middleware
     app.add_middleware(LoggingMiddleware)
