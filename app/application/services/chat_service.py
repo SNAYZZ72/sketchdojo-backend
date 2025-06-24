@@ -12,34 +12,9 @@ from app.application.interfaces.ai_provider import AIProvider
 from app.domain.entities.chat import ChatMessage, ChatRoom, ToolCall
 from app.domain.repositories.chat_repository import ChatRepository
 from app.domain.repositories.webtoon_repository import WebtoonRepository
-from app.config import get_settings
+from app.infrastructure.ai.prompt_templates import PromptTemplates
 
 logger = logging.getLogger(__name__)
-
-
-class SystemPromptProvider:
-    """Provider for system prompts used in AI interactions"""
-    
-    @staticmethod
-    def get_chat_system_prompt() -> str:
-        """Get the system prompt for webtoon chat interactions"""
-        settings = get_settings()
-        # Use settings-based system prompt if available
-        if hasattr(settings, "chat_system_prompt") and settings.chat_system_prompt:
-            return settings.chat_system_prompt
-            
-        # Default system prompt
-        return """You are a creative and helpful assistant for a webtoon creation app. 
-Your task is to help users create and edit their webtoons by generating panels, 
-characters, dialogue, and more. When the user asks you to modify the webtoon, 
-always use the appropriate tools rather than just describing what could be done.
-
-Guidelines:
-1. When asked to create or modify webtoon content, ALWAYS use available tools.
-2. Be specific and detailed when providing parameters to tools.
-3. Explain what you're doing in a friendly, conversational manner.
-4. If you need to perform multiple actions, do them one at a time, explaining each step.
-5. When asked about the webtoon's current state, refer to the context provided."""
 
 
 class ToolProvider:
@@ -253,8 +228,9 @@ class ChatService:
             
             logger.info(f"Calling AI provider with {len(formatted_tools)} tools and {len(formatted_messages)} messages")
             
-            # Add system message with instructions for the agent
-            system_prompt = SystemPromptProvider.get_chat_system_prompt()
+            # Add system message with instructions for the agent using centralized prompt templates
+            prompt_templates = PromptTemplates()
+            system_prompt = prompt_templates.get_chat_system_prompt(webtoon_context)
             formatted_messages.insert(0, {
                 "role": "system",
                 "content": system_prompt

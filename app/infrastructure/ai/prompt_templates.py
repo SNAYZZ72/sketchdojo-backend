@@ -5,6 +5,8 @@ Prompt templates for AI interactions
 import json
 from typing import Any, Dict, List, Optional
 
+from app.config import get_settings
+
 
 class PromptTemplates:
     """Collection of prompt templates for different AI tasks"""
@@ -138,10 +140,48 @@ Technical specifications: {specs_text}
 Enhance this description for AI image generation, adding artistic and technical details while preserving the core visual concept.
 """
         
+    def format_image_generation_prompt(
+        self, visual_description: str, art_style: str, style_preferences: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Format a prompt for image generation
+        
+        Args:
+            visual_description: Description of what should be depicted
+            art_style: Style of the art (e.g., "webtoon")
+            style_preferences: Optional dictionary of additional style preferences
+            
+        Returns:
+            Formatted prompt for image generation
+        """
+        enhanced_prompt = f"{visual_description} Style: {art_style}"
+        
+        if style_preferences:
+            enhanced_prompt += f" {' '.join([f'{k}: {v}' for k, v in style_preferences.items()])}"
+            
+        return enhanced_prompt
+        
     def get_chat_system_prompt(self, webtoon_context: Optional[Dict[str, Any]] = None) -> str:
         """Get system prompt for chat completions with optional webtoon context"""
-        system_content = "You are a creative and helpful assistant for a webtoon creation app."
         
+        # Check settings first for a configured system prompt
+        settings = get_settings()
+        if hasattr(settings, "chat_system_prompt") and settings.chat_system_prompt:
+            system_content = settings.chat_system_prompt
+        else:
+            # Default system prompt
+            system_content = """You are a creative and helpful assistant for a webtoon creation app. 
+Your task is to help users create and edit their webtoons by generating panels, 
+characters, dialogue, and more. When the user asks you to modify the webtoon, 
+always use the appropriate tools rather than just describing what could be done.
+
+Guidelines:
+1. When asked to create or modify webtoon content, ALWAYS use available tools.
+2. Be specific and detailed when providing parameters to tools.
+3. Explain what you're doing in a friendly, conversational manner.
+4. If you need to perform multiple actions, do them one at a time, explaining each step.
+5. When asked about the webtoon's current state, refer to the context provided."""
+        
+        # Add webtoon context if available
         if webtoon_context:
             system_content += "\n\nWebtoon context:\n"
             system_content += json.dumps(webtoon_context, indent=2)

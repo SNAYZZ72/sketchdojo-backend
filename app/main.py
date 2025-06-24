@@ -13,6 +13,8 @@ from app.api.middleware.metrics import MetricsMiddleware
 from app.api.exception_handlers import add_exception_handlers
 from app.api.v1.routes import generation, health, tasks, webtoons, test, chat
 from app.config import get_settings
+from app.infrastructure.notifications.redis_subscriber import create_redis_subscriber
+from app.infrastructure.notifications.websocket_handlers import register_websocket_handlers
 from app.monitoring.logging_config import setup_logging
 from app.monitoring.metrics import get_metrics, get_metrics_content_type, setup_metrics
 from app.websocket.connection_manager import get_connection_manager
@@ -41,6 +43,18 @@ async def lifespan(app: FastAPI):
         logger.info(f"Registered WebSocket tools: {len(available_tools)}")
     except Exception as e:
         logger.error(f"Error setting up WebSocket tools: {str(e)}")
+        
+    # Initialize Redis notification subscriber
+    try:
+        redis_subscriber = await create_redis_subscriber()
+        # Register WebSocket handlers
+        await register_websocket_handlers(redis_subscriber, connection_manager)
+        # Start the subscriber
+        await redis_subscriber.start()
+        logger.info("Redis notification system initialized and running")
+        app.state.redis_subscriber = redis_subscriber
+    except Exception as e:
+        logger.error(f"Error setting up Redis notification system: {str(e)}")
 
     logger.info(f"Starting {settings.app_name} v{settings.app_version}")
     logger.info(f"Environment: {settings.environment}")
@@ -49,6 +63,16 @@ async def lifespan(app: FastAPI):
 
     # Cleanup
     logger.info("Shutting down application")
+    
+    # Stop Redis subscriber if it exists
+    if hasattr(app.state, "redis_subscriber"):
+        try:
+            await app.state.redis_subscriber.stop()
+            logger.info("Redis notification subscriber stopped")
+        except Exception as e:
+            logger.error(f"Error stopping Redis subscriber: {str(e)}")
+    
+    # Disconnect all WebSocket clients
     await connection_manager.disconnect_all()
 
 

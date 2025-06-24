@@ -76,17 +76,22 @@ class ConnectionManager:
 
     async def subscribe_to_task(self, client_id: str, task_id: str):
         """Subscribe a client to task updates"""
+        logger.info(f"Subscribing client {client_id} to task {task_id}")
+        
         if client_id not in self.client_subscriptions:
+            logger.warning(f"Client {client_id} not found in client_subscriptions")
             return False
 
         # Add to subscriptions
         self.client_subscriptions[client_id].add(task_id)
 
         if task_id not in self.task_subscriptions:
+            logger.info(f"Creating new subscription entry for task {task_id}")
             self.task_subscriptions[task_id] = set()
         self.task_subscriptions[task_id].add(client_id)
 
-        logger.debug(f"Client {client_id} subscribed to task {task_id}")
+        logger.info(f"Client {client_id} subscribed to task {task_id}")
+        logger.info(f"All task subscriptions: {self.task_subscriptions}")
 
         # Send confirmation
         await self.send_personal_message(
@@ -155,16 +160,25 @@ class ConnectionManager:
 
         await self.broadcast_task_update(task_id, update)
 
-    async def broadcast_webtoon_updated(self, webtoon_id: str, html_content: str):
-        """Broadcast webtoon update with HTML content"""
-        # Find all clients subscribed to any task involving this webtoon
+    async def broadcast_webtoon_updated(self, webtoon_id: str, html_content: str, task_id: str = None):
+        """Broadcast webtoon update to subscribers"""
+        logger.info(f"Broadcasting webtoon {webtoon_id} update with task_id: {task_id}")
+        logger.info(f"HTML content length: {len(html_content)}")
+        logger.info(f"Current task subscriptions: {self.task_subscriptions}")
+        
         target_clients = set()
         
-        # Look through task subscriptions to find relevant clients
-        for task_id, client_ids in self.task_subscriptions.items():
-            # Check task_id format - often task_ids might contain webtoon_id
-            # This is a simplistic approach, in a real implementation you might want more precise targeting
-            target_clients.update(client_ids)
+        if task_id and task_id in self.task_subscriptions:
+            # If we have a task_id, use it to find subscribed clients
+            target_clients = self.task_subscriptions[task_id].copy()
+            logger.info(f"Found {len(target_clients)} clients subscribed to task {task_id}")
+        else:
+            # Fallback to looking through all subscriptions
+            logger.warning(f"No task_id provided for webtoon {webtoon_id} or no subscriptions found")
+            # Try looking through all subscriptions as a fallback
+            for subscription_task_id, client_ids in self.task_subscriptions.items():
+                target_clients.update(client_ids)
+                logger.info(f"Adding {len(client_ids)} clients from task {subscription_task_id}")
         
         if not target_clients:
             logger.warning(f"No clients subscribed for webtoon {webtoon_id} updates")
@@ -179,6 +193,7 @@ class ConnectionManager:
         
         # Send update to all target clients
         for client_id in target_clients:
+            logger.info(f"Sending webtoon update to client {client_id}")
             await self.send_personal_message(update, client_id)
             
         logger.info(

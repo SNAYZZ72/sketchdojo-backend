@@ -9,9 +9,13 @@ import json
 from datetime import datetime, timezone, UTC
 from typing import Any, Dict, List
 from uuid import UUID, uuid4
+from app.config import get_settings
 
 from app.tasks.celery_app import celery_app
-from app.websocket.connection_manager import get_connection_manager
+# Import Redis publisher for notifications
+from app.infrastructure.notifications.redis_publisher import get_redis_publisher
+from app.infrastructure.notifications.notification_types import NotificationType
+from app.websocket.connection_manager import get_connection_manager  # Keep for backward compatibility
 from app.domain.entities.generation_task import TaskStatus
 from app.domain.repositories.task_repository import TaskRepository
 from app.application.interfaces.storage_provider import StorageProvider
@@ -120,11 +124,20 @@ def start_webtoon_generation_task(self, task_id: str, request_data: Dict[str, An
             raise RuntimeError(f"Failed to save task {task_id}: {str(e)}")
         logger.debug(f"Updated task {task_id} status to IN_PROGRESS")
         
-        # Run the async generation in sync context
-        # Use the synchronous version of the generation function to avoid asyncio issues
+        # Run the async generation in sync context by creating a new event loop
+        # since we can't use asyncio.run() in a running event loop
         try:
-            result = generate_webtoon_sync(task_id, request_data)
-            logger.debug(f"Synchronous generation completed for task {task_id}")
+            # Create a new event loop and set it as the current event loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Run the async function in this loop and get the result
+            result = loop.run_until_complete(generate_webtoon_async(task_id, request_data))
+            
+            # Clean up the loop
+            loop.close()
+            
+            logger.debug(f"Asynchronous generation completed for task {task_id}")
         except Exception as e:
             logger.error(f"Error in synchronous generation: {str(e)}")
             raise
@@ -164,11 +177,22 @@ def start_webtoon_generation_task(self, task_id: str, request_data: Dict[str, An
         except Exception as inner_e:
             logger.error(f"Failed to update task status to FAILED: {str(inner_e)}", exc_info=True)
             
-        # Notify WebSocket clients of failure
+        # Notify WebSocket clients of failure via Redis
         try:
-            asyncio.run(notify_generation_failed(task_id, str(e)))
-        except Exception as ws_error:
-            logger.error(f"Failed to send WebSocket notification: {str(ws_error)}")
+            # Get Redis publisher
+            notification_publisher = get_redis_publisher()
+            
+            # Publish task failure notification
+            notification_publisher.publish(
+                NotificationType.TASK_FAILED,
+                {
+                    "task_id": task_id,
+                    "error": str(e)
+                }
+            )
+            logger.info(f"Published task failure notification for task {task_id}")
+        except Exception as notification_error:
+            logger.error(f"Failed to publish task failure notification: {str(notification_error)}")
             
         raise
 
@@ -177,13 +201,22 @@ async def generate_webtoon_async(
     task_id: str, request_data: Dict[str, Any]
 ) -> Dict[str, Any]:
     """Async webtoon generation logic"""
+    # Initialize connection manager (for backward compatibility) and notification publisher
     connection_manager = get_connection_manager()
+    notification_publisher = get_redis_publisher()
 
     try:
         # Step 1: Initialize dependencies
-        asyncio.run(connection_manager.broadcast_generation_progress(
-            task_id, 10.0, "Initializing generation process..."
-        ))
+
+        # Publish task progress notification
+        notification_publisher.publish(
+            NotificationType.TASK_PROGRESS,
+            {
+                "task_id": task_id,
+                "progress": 10.0,
+                "message": "Initializing generation process..."
+            }
+        )
 
         # Get services (in real implementation, properly initialize these)
         from app.application.dto.generation_dto import GenerationRequestDTO
@@ -197,11 +230,11 @@ async def generate_webtoon_async(
         from app.infrastructure.image.stability_provider import StabilityProvider
         from app.infrastructure.storage.file_storage import FileStorage
 
-        # Get settings
-        settings = get_settings()
 
         # Initialize storage and repositories based on settings
         # Handle both storage_type (standard config) and storage_provider (docker settings)
+        # settings is now properly imported at the top of the file
+        settings = get_settings()
         storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "redis"))
         
         if storage_type == "file":
@@ -224,7 +257,7 @@ async def generate_webtoon_async(
         task_repo = TaskRepository(storage)
         
         # Update task status to in-progress - use synchronous methods
-        task = task_repo.get_by_id_sync(task_id) if hasattr(task_repo, 'get_by_id_sync') else asyncio.run(task_repo.get_by_id(task_id))
+        task = task_repo.get_by_id_sync(task_id) if hasattr(task_repo, 'get_by_id_sync') else await task_repo.get_by_id(task_id)
         if task:
             task.status = TaskStatus.PROCESSING
             task.started_at = datetime.now(UTC)
@@ -233,7 +266,7 @@ async def generate_webtoon_async(
             if hasattr(task_repo, 'save_sync'):
                 task_repo.save_sync(task)
             else:
-                asyncio.run(task_repo.save(task))
+                await task_repo.save(task)
 
         # Initialize services directly without using dependency injection
         ai_provider = OpenAIProvider(
@@ -267,29 +300,29 @@ async def generate_webtoon_async(
         )
 
         # Step 2: Generate story
-        asyncio.run(connection_manager.broadcast_generation_progress(
+        await connection_manager.broadcast_generation_progress(
             task_id, 20.0, "Generating story structure..."
-        ))
+        )
 
         # Use helper function to ensure art_style is a valid string
         from app.domain.constants.art_styles import ensure_art_style_string
         art_style_str = ensure_art_style_string(request_dto.art_style)
         
-        # Call AI provider methods with asyncio.run
-        story_data = asyncio.run(ai_provider.generate_story(
+        # Call AI provider methods directly with await
+        story_data = await ai_provider.generate_story(
             request_dto.prompt,
             art_style_str,
             request_dto.additional_context,
-        ))
+        )
 
         # Step 3: Generate scenes
-        asyncio.run(connection_manager.broadcast_generation_progress(
+        await connection_manager.broadcast_generation_progress(
             task_id, 40.0, "Creating panel descriptions..."
-        ))
+        )
 
-        scenes_data = asyncio.run(ai_provider.generate_scene_descriptions(
+        scenes_data = await ai_provider.generate_scene_descriptions(
             story_data, request_dto.num_panels
-        ))
+        )
 
         # Step 4: Generate images
         total_panels = len(scenes_data)
@@ -297,34 +330,38 @@ async def generate_webtoon_async(
 
         for i, scene_data in enumerate(scenes_data):
             progress = 40.0 + (50.0 * (i + 1) / total_panels)
-            asyncio.run(connection_manager.broadcast_generation_progress(
-                task_id,
-                progress,
-                f"Generating image for panel {i + 1}/{total_panels}...",
-            ))
+            # Publish task progress notification
+            notification_publisher.publish(
+                NotificationType.TASK_PROGRESS,
+                {
+                    "task_id": task_id,
+                    "progress": progress,
+                    "message": f"Generating image for panel {i + 1}/{total_panels}..."
+                }
+            )
 
             # Create enhanced prompt for image generation
             # We use the already converted art_style_str from earlier
             # No need to convert again
                 
-            enhanced_prompt = asyncio.run(ai_provider.enhance_visual_description(
+            enhanced_prompt = await ai_provider.enhance_visual_description(
                 scene_data.get("visual_description", ""),
                 art_style_str,
                 {"style": art_style_str},
-            ))
+            )
 
-            # Generate image - check availability and generate synchronously
-            if asyncio.run(image_generator.is_available()):
+            # Generate image - check availability and generate asynchronously
+            if await image_generator.is_available():
                 try:
                     (
                         local_path,
                         public_url,
-                    ) = asyncio.run(image_generator.generate_image(
+                    ) = await image_generator.generate_image(
                         enhanced_prompt,
                         1024,
                         1024,
                         art_style_str,
-                    ))
+                    )
                     scene_data["image_url"] = public_url
                 except Exception as e:
                     logger.warning(f"Failed to generate image for panel {i}: {str(e)}")
@@ -334,22 +371,12 @@ async def generate_webtoon_async(
 
             generated_panels.append(scene_data)
 
-            # Notify panel completion
-            asyncio.run(connection_manager.broadcast_task_update(
-                task_id,
-                {
-                    "panel_generated": {
-                        "panel_number": i + 1,
-                        "total_panels": total_panels,
-                        "image_url": scene_data.get("image_url"),
-                    }
-                },
-            ))
+            # Panel completion notification is handled through task progress
 
         # Step 5: Finalize webtoon
-        asyncio.run(connection_manager.broadcast_generation_progress(
+        await connection_manager.broadcast_generation_progress(
             task_id, 95.0, "Finalizing webtoon..."
-        ))
+        )
 
         # Create webtoon entity and save with dynamically generated UUID
         webtoon_id = str(uuid4())
@@ -400,7 +427,7 @@ async def generate_webtoon_async(
                 panel = Panel(
                     sequence_number=i + 1,
                     scene=scene,
-                    dimensions=PanelDimensions(size=PanelSize.MEDIUM),
+                    dimensions=PanelDimensions(size=PanelSize.FULL),
                     image_url=panel_data.get("image_url", "")
                 )
                 
@@ -421,25 +448,34 @@ async def generate_webtoon_async(
                 # Add panel to webtoon
                 webtoon.add_panel(panel)
             
-            # Get the Redis-backed webtoon repository
-            webtoon_repository = get_webtoon_repository()
+            # Initialize the webtoon repository directly
+            # We already have storage initialized from earlier in the function
+            webtoon_repository = WebtoonRepository(storage)
             
             # Save the webtoon entity to Redis using sync method if available
             if hasattr(webtoon_repository, 'save_sync'):
                 webtoon_repository.save_sync(webtoon)
             else:
-                asyncio.run(webtoon_repository.save(webtoon))
+                await webtoon_repository.save(webtoon)
             logger.info(f"Saved webtoon entity to repository with ID: {webtoon_id} and {len(webtoon.panels)} panels")
         except Exception as webtoon_save_error:
             logger.error(f"Failed to save webtoon entity: {str(webtoon_save_error)}", exc_info=True)
 
         # Step 6: Complete
-        asyncio.run(connection_manager.broadcast_generation_progress(
-            task_id, 100.0, "Generation completed!"
-        ))
+        # Publish final progress notification
+        notification_publisher.publish(
+            NotificationType.TASK_PROGRESS,
+            {
+                "task_id": task_id,
+                "progress": 100.0,
+                "message": "Generation completed!"
+            }
+        )
 
         # Update task status in the database
         # Initialize storage with the same pattern as the main function
+        # settings is now properly imported at the top of the file
+        settings = get_settings()
         storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "redis"))
         if storage_type == "file":
             storage_path = getattr(settings, "file_storage_path", getattr(settings, "storage_path", "./storage"))
@@ -461,7 +497,7 @@ async def generate_webtoon_async(
         if hasattr(task_repository, 'get_by_id_sync'):
             task = task_repository.get_by_id_sync(task_id)
         else:
-            task = asyncio.run(task_repository.get_by_id(task_id))
+            task = await task_repository.get_by_id(task_id)
             
         if task:
             task.status = TaskStatus.COMPLETED
@@ -475,27 +511,43 @@ async def generate_webtoon_async(
             if hasattr(task_repository, 'save_sync'):
                 task_repository.save_sync(task)
             else:
-                asyncio.run(task_repository.save(task))
+                await task_repository.save(task)
 
-        asyncio.run(connection_manager.broadcast_generation_completed(
-            task_id, result, webtoon_id=webtoon_id
-        ))
+        # Publish task completion notification
+        notification_publisher.publish(
+            NotificationType.TASK_COMPLETED,
+            {
+                "task_id": task_id,
+                "result": result,
+                "webtoon_id": webtoon_id
+            }
+        )
         
         # Fetch and broadcast HTML content
         try:
-            # Import the webtoon service
-            from app.application.services.webtoon_service import WebtoonService, get_webtoon_service
+            # Import the webtoon service and renderer
+            from app.application.services.webtoon_service import WebtoonService
+            from app.utils.webtoon_renderer import WebtoonRenderer
             
-            # Get webtoon service
-            webtoon_service = get_webtoon_service()
+            # Create webtoon service directly
+            webtoon_repo = WebtoonRepository(storage)
+            renderer = WebtoonRenderer()
+            webtoon_service = WebtoonService(webtoon_repo, renderer)
             
-            # Fetch HTML content - use asyncio.run since this is a synchronous function
-            html_content = asyncio.run(webtoon_service.get_webtoon_html_content(UUID(webtoon_id)))
+            # Fetch HTML content - directly await the function call
+            html_content = await webtoon_service.get_webtoon_html_content(UUID(webtoon_id))
             
-            # Broadcast update if HTML content is available
+            # Publish webtoon update notification if HTML content is available
             if html_content:
-                logger.info(f"Broadcasting HTML update for newly created webtoon: {webtoon_id}")
-                asyncio.run(connection_manager.broadcast_webtoon_updated(webtoon_id, html_content))
+                logger.info(f"Publishing webtoon update notification for: {webtoon_id} with task_id: {task_id}")
+                notification_publisher.publish(
+                    NotificationType.WEBTOON_UPDATED,
+                    {
+                        "task_id": task_id,
+                        "webtoon_id": webtoon_id,
+                        "html_content": html_content
+                    }
+                )
         except Exception as html_error:
             logger.error(f"Error fetching/broadcasting HTML content: {str(html_error)}", exc_info=True)
 
@@ -507,6 +559,8 @@ async def generate_webtoon_async(
         
         # Update task status in the database for failures
         # Initialize storage similar to the main function body
+        # settings is now properly imported at the top of the file
+        settings = get_settings()
         storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "redis"))
         if storage_type == "file":
             storage_path = getattr(settings, "file_storage_path", getattr(settings, "storage_path", "./storage"))
@@ -530,16 +584,23 @@ async def generate_webtoon_async(
             task.completed_at = datetime.now(UTC)
             task.error_message = str(e)
             await task_repository.save(task)
-            
-        await connection_manager.broadcast_generation_failed(task_id, str(e))
-        raise
 
 
 async def notify_generation_failed(task_id: str, error_message: str):
-    """Notify WebSocket clients of generation failure"""
-    logger.debug(f"Sending failure notification for task {task_id}: {error_message}")
-    connection_manager = get_connection_manager()
-    await connection_manager.broadcast_generation_failed(task_id, error_message)
+    """Notify WebSocket clients about generation failure via Redis"""
+    try:
+        notification_publisher = get_redis_publisher()
+        notification_publisher.publish(
+            NotificationType.TASK_FAILED,
+            {
+                "task_id": task_id,
+                "error": error_message
+            }
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Error publishing failure notification: {str(e)}")
+        return False
 
 
 @celery_app.task
@@ -807,12 +868,14 @@ def generate_webtoon_sync(task_id: str, request_data: Dict[str, Any]) -> Dict[st
         # Generate image for the panel
         image_url = None
         try:
-            # Create enhanced prompt for image generation
+            # Create enhanced prompt for image generation using centralized prompt templates
             visual_description = panel_details.get("visual_description", scene_description)
-            enhanced_prompt = f"{visual_description} Style: {art_style}"
-            
-            if style_preferences:
-                enhanced_prompt += f" {' '.join([f'{k}: {v}' for k, v in style_preferences.items()])}"
+            prompt_templates = PromptTemplates()
+            enhanced_prompt = prompt_templates.format_image_generation_prompt(
+                visual_description=visual_description,
+                art_style=art_style,
+                style_preferences=style_preferences
+            )
                 
             # Generate the image
             image_result = asyncio.run(image_generator.generate_image(

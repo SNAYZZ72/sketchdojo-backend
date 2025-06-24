@@ -44,7 +44,7 @@ class WebtoonRenderer:
         
         # Render each panel
         for panel in panels:
-            panel_html = WebtoonRenderer._render_panel(panel, webtoon.characters)
+            panel_html = WebtoonRenderer._render_panel(panel, webtoon.characters, webtoon.art_style)
             html += panel_html
             
         # Close containers
@@ -56,25 +56,26 @@ class WebtoonRenderer:
         return html
     
     @staticmethod
-    def _render_panel(panel: Panel, characters: List[Any]) -> str:
+    def _render_panel(panel: Panel, characters: List[Any], art_style: str) -> str:
         """
         Renders a single panel as HTML
         
         Args:
             panel: The panel entity to render
             characters: List of characters for reference
+            art_style: The art style from the webtoon
             
         Returns:
             HTML string representation of the panel
         """
         # Panel container with data attributes for frontend interactivity
         html = f"""
-        <div class="panel-container" data-panel-id="{panel.id}" data-art-style="{panel.art_style}">
+        <div class="panel-container" data-panel-id="{panel.id}" data-art-style="{art_style}">
             <div class="panel-image-container">
                 <img 
                     src="{panel.image_url}" 
                     class="panel-image" 
-                    alt="{panel.description or 'Webtoon panel'}"
+                    alt="{panel.scene.description or 'Webtoon panel'}"
                 />
             </div>
         """
@@ -90,8 +91,8 @@ class WebtoonRenderer:
         # Panel description/metadata (hidden by default, can be shown via UI controls)
         html += f"""
             <div class="panel-metadata" style="display: none;">
-                <div class="panel-description">{panel.description or ''}</div>
-                <div class="panel-art-style">{panel.art_style or 'default'}</div>
+                <div class="panel-description">{panel.scene.description or ''}</div>
+                <div class="panel-art-style">{art_style or 'default'}</div>
             </div>
         </div>
         """
@@ -123,12 +124,12 @@ class WebtoonRenderer:
                         character_color = character.appearance.hair_color.lower().replace(' ', '-')
                 break
         
-        # Determine bubble type CSS class
+        # Determine bubble type CSS class based on style
         bubble_type_class = "speech"
-        if bubble.bubble_type:
-            if bubble.bubble_type.lower() == "thought":
+        if bubble.style:
+            if bubble.style.lower() == "thought":
                 bubble_type_class = "thought"
-            elif bubble.bubble_type.lower() == "narration":
+            elif bubble.style.lower() == "narration":
                 bubble_type_class = "narration"
         
         # Determine position class
