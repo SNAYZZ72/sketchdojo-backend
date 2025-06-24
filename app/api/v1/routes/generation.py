@@ -72,10 +72,10 @@ async def generate_webtoon(
             
             logger.debug(f"Sending Celery task with task_id: {result_dto.task_id}")
             
-            # Send the task to Celery
+            # Send the task to Celery - just pass the task_id, we'll retrieve the full data from the task repository
             celery_app.send_task(
                 'app.tasks.generation_tasks.start_webtoon_generation_task',
-                args=[str(result_dto.task_id), request_dict],
+                args=[str(result_dto.task_id)],
                 queue='celery'  # Ensure the task is sent to the default queue
             )
         except Exception as e:
@@ -84,6 +84,7 @@ async def generate_webtoon(
 
         return GenerationResponse(
             task_id=result_dto.task_id,
+            webtoon_id=result_dto.webtoon_id,
             status=result_dto.status,
             message="Generation started successfully",
         )

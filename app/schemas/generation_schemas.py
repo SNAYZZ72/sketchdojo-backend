@@ -67,6 +67,7 @@ class GenerationResponse(BaseModel):
     """Response for generation request"""
 
     task_id: UUID
+    webtoon_id: Optional[UUID] = None
     status: str
     message: str
 

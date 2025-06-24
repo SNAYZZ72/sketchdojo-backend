@@ -78,16 +78,34 @@ class WebtoonRepository(BaseRepository[Webtoon]):
         """Get webtoon by ID synchronously (for Celery tasks)"""
         try:
             key = self._get_key(entity_id)
+            logger.info(f"Attempting to retrieve webtoon with key: {key} (ID: {entity_id})")
+            
+            # Check if the storage exists correctly
+            if self.storage is None:
+                logger.error(f"Storage provider is None when retrieving webtoon {entity_id}")
+                return None
+                
+            # List keys to check if the webtoon exists
+            if hasattr(self.storage, 'list_keys_sync'):
+                all_keys = self.storage.list_keys_sync(f"{self.key_prefix}*")
+                logger.info(f"Available webtoon keys: {all_keys}")
+                if key not in all_keys:
+                    logger.warning(f"Key {key} not found in storage")
             
             # Check if the storage provider has sync methods
             if hasattr(self.storage, 'retrieve_sync'):
+                logger.info(f"Using synchronous retrieve_sync for webtoon {entity_id}")
                 data = self.storage.retrieve_sync(key)
             else:
                 # Fallback to regular retrieve for non-async providers
+                logger.info(f"Falling back to async retrieve for webtoon {entity_id} (could cause issues in Celery)")
                 data = self.storage.retrieve(key)
                 
             if data is None:
+                logger.warning(f"No data found for webtoon {entity_id} with key {key}")
                 return None
+            
+            logger.info(f"Successfully retrieved webtoon data with key {key}")
             return self.mapper.from_dict(data)
         except Exception as e:
             logger.error(f"Error retrieving webtoon {entity_id} synchronously: {str(e)}")

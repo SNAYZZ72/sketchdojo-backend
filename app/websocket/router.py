@@ -124,7 +124,8 @@ class MessageHandlerRegistry:
     def _register_handlers(self) -> None:
         """Register all message handlers"""
         # Task subscription handlers
-        self.register("subscribe_task", self._handle_subscribe_task)
+        self.register("subscribe_task", self._handle_subscribe_task)  # Original handler
+        self.register("subscribe_to_task", self._handle_subscribe_task)  # Add handler for frontend message type
         self.register("unsubscribe_task", self._handle_unsubscribe_task)
         
         # Chat message handlers

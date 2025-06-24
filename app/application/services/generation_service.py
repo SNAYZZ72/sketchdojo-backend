@@ -45,6 +45,24 @@ class GenerationService:
         # Import locally to avoid circular imports
         from app.domain.constants.art_styles import ensure_art_style_string
         
+        # Create a placeholder webtoon entity first
+        from app.domain.entities.webtoon import Webtoon
+        
+        # Create a placeholder webtoon with minimal information
+        placeholder_webtoon = Webtoon(
+            title=f"Generating: {request.prompt[:30]}...",
+            description=f"Webtoon being generated from prompt: {request.prompt}",
+            art_style=ensure_art_style_string(request.art_style)
+        )
+        
+        # Save the placeholder webtoon to get an ID
+        saved_webtoon = await self.webtoon_repository.save(placeholder_webtoon)
+        webtoon_id = saved_webtoon.id
+        
+        # Log that we're creating a placeholder webtoon
+        logger.info(f"Created placeholder webtoon with ID {webtoon_id} for upcoming generation task")
+        
+        # Create the task with the webtoon_id included in input_data
         task = GenerationTask(
             task_type=TaskType.WEBTOON_GENERATION,
             input_data={
@@ -54,6 +72,7 @@ class GenerationService:
                 "character_descriptions": request.character_descriptions or [],
                 "additional_context": request.additional_context,
                 "style_preferences": request.style_preferences or {},
+                "webtoon_id": str(webtoon_id),  # Include the webtoon ID in the task data
             },
             progress=TaskProgress(
                 total_steps=5
@@ -66,6 +85,7 @@ class GenerationService:
 
         return GenerationResultDTO(
             task_id=task.id,
+            webtoon_id=webtoon_id,  # Return the webtoon_id in the result
             status=task.status.value,
             progress_percentage=task.progress.percentage,
             current_operation="Starting generation...",

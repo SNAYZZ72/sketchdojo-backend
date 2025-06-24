@@ -7,10 +7,11 @@ import logging
 import os
 import json
 from datetime import datetime, timezone, UTC
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 from uuid import UUID, uuid4
-from app.config import get_settings
 
+from app.config import get_settings
+from app.dependencies import create_storage_provider
 from app.tasks.celery_app import celery_app
 # Import Redis publisher for notifications
 from app.infrastructure.notifications.redis_publisher import get_redis_publisher
@@ -18,6 +19,7 @@ from app.infrastructure.notifications.notification_types import NotificationType
 from app.websocket.connection_manager import get_connection_manager  # Keep for backward compatibility
 from app.domain.entities.generation_task import TaskStatus
 from app.domain.repositories.task_repository import TaskRepository
+from app.domain.repositories.webtoon_repository import WebtoonRepository
 from app.application.interfaces.storage_provider import StorageProvider
 
 # Configure root logger to see all debug messages
@@ -25,93 +27,70 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
+def _get_repositories() -> Tuple[StorageProvider, TaskRepository, WebtoonRepository]:
+    """Helper function to get consistent storage and repositories for Celery tasks
+    Uses the same storage provider creation logic as the main application.
+    Returns a tuple of (storage, task_repo, webtoon_repo)
+    """
+    # Get settings
+    settings = get_settings()
+    
+    # Create storage provider using the centralized function
+    storage = create_storage_provider(settings)
+    
+    # Log storage information
+    logger.info(f"Celery task using storage provider: {storage.__class__.__name__}")
+    
+    # Create repositories with this storage
+    from app.domain.mappers.task_mapper import TaskDataMapper
+    from app.domain.mappers.webtoon_mapper import WebtoonDataMapper
+    
+    task_repo = TaskRepository(storage, mapper=TaskDataMapper())
+    webtoon_repo = WebtoonRepository(storage, mapper=WebtoonDataMapper())
+    
+    return storage, task_repo, webtoon_repo
+
+
 @celery_app.task(bind=True)
-def start_webtoon_generation_task(self, task_id: str, request_data: Dict[str, Any]):
+def start_webtoon_generation_task(self, task_id: str):
     """Background task for webtoon generation"""
     task_name = self.name
     task_id_celery = self.request.id
     task_retries = self.request.retries
     
-    # Log detailed information about the art_style field
-    if 'art_style' in request_data:
-        art_style = request_data['art_style']
-        logger.debug(f"ART_STYLE DEBUG - Type: {type(art_style).__name__}, Value: {art_style}")
-        
-        # Ensure art_style is a string
-        if hasattr(art_style, 'value'):
-            logger.warning(f"Found ArtStyle enum with value: {art_style.value}")
-            request_data['art_style'] = art_style.value
-        elif not isinstance(art_style, str):
-            logger.warning(f"Converting non-string art_style to string: {art_style}")
-            request_data['art_style'] = str(art_style)
-    
     logger.debug(f"CELERY TASK EXECUTION START - Task {task_name} with request ID {task_id_celery}")
     logger.debug(f"Task parameters - task_id: {task_id}")
-    logger.debug(f"Request data keys: {list(request_data.keys())}")
-    if 'art_style' in request_data:
-        logger.debug(f"art_style after processing: {request_data['art_style']} (type: {type(request_data['art_style']).__name__})")
     logger.debug(f"Environment variables: REDIS_URL={os.environ.get('REDIS_URL')}, CELERY_BROKER_URL={os.environ.get('CELERY_BROKER_URL')}")
     
-    # Initialize storage directly here for consistent file storage usage
     try:
-        logger.debug("Getting settings for storage initialization")
-        # Get settings
-        from app.config import get_settings
-        settings = get_settings()
+        # Initialize storage and repositories using the centralized helper function
+        storage, task_repo, webtoon_repo = _get_repositories()
         
-        # Initialize storage with proper settings for Docker environment
-        # Force file storage for consistency
-        from app.infrastructure.storage.file_storage import FileStorage
-        
-        # Handle both standard and Docker settings paths
-        storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "file"))        
-        storage_path = getattr(settings, "file_storage_path", getattr(settings, "storage_path", "/app/storage"))
-        
-        # Log the storage configuration for debugging
-        logger.debug(f"Using storage type: {storage_type} at path: {storage_path}")
-        
-        # List storage directory contents to verify access
-        try:
-            if os.path.exists(storage_path):
-                files = os.listdir(storage_path)
-                logger.debug(f"Storage directory exists. Contents: {files[:10] if len(files) > 10 else files}")
-            else:
-                logger.warning(f"Storage directory {storage_path} does not exist")
-                os.makedirs(storage_path, exist_ok=True)
-                logger.debug(f"Created storage directory {storage_path}")
-        except Exception as e:
-            logger.error(f"Error accessing storage directory: {str(e)}")
-        
-        # Use storage based on configuration
-        logger.debug(f"Initializing storage of type '{storage_type}' and task repository")
-        if storage_type == "file":
-            storage = FileStorage(storage_path)
-            logger.info(f"Using file storage at {storage_path}")
-        elif storage_type == "redis":
-            from app.infrastructure.storage.redis_provider import RedisProvider
-            redis_url = getattr(settings, "redis_url", os.environ.get("REDIS_URL", "redis://redis:6379/0"))
-            storage = RedisProvider(redis_url)
-            logger.info(f"Using Redis storage at {redis_url}")
-        else:
-            from app.infrastructure.storage.memory_storage import MemoryStorage
-            storage = MemoryStorage()
-            logger.warning("Using in-memory storage which is temporary and not persisted!")
-        task_repo = TaskRepository(storage)
-        
-        # Check if task exists in storage before updating
-        # Use asyncio.run to execute the coroutine in a sync context
-        task = asyncio.run(task_repo.get_by_id(task_id))
+        # Retrieve the task from storage - we need its input_data
+        # Use sync methods to avoid asyncio.run issues in Celery worker
+        task = task_repo.get_by_id_sync(task_id)
         if not task:
-            logger.warning(f"Task {task_id} not found in storage. Creating task record.")
-            from app.domain.entities.generation_task import GenerationTask, TaskType, TaskProgress
-            task = GenerationTask(
-                id=task_id,
-                task_type=TaskType.WEBTOON_GENERATION,
-                status=TaskStatus.PENDING,
-                input_data=request_data,
-                created_at=datetime.now(timezone.utc),
-                progress=TaskProgress()
-            )
+            logger.error(f"Task {task_id} not found in storage. Cannot proceed with generation.")
+            raise ValueError(f"Task {task_id} not found in storage")
+            
+        # Extract the request data from the task
+        request_data = task.input_data
+        
+        # Log details about the request data
+        logger.debug(f"Request data keys: {list(request_data.keys())}")
+        
+        # Ensure art_style is a string if present
+        if 'art_style' in request_data:
+            art_style = request_data['art_style']
+            logger.debug(f"ART_STYLE DEBUG - Type: {type(art_style).__name__}, Value: {art_style}")
+            
+            # Ensure art_style is a string
+            if hasattr(art_style, 'value'):
+                logger.warning(f"Found ArtStyle enum with value: {art_style.value}")
+                request_data['art_style'] = art_style.value
+            elif not isinstance(art_style, str):
+                logger.warning(f"Converting non-string art_style to string: {art_style}")
+                request_data['art_style'] = str(art_style)
         
         # Update task status to IN_PROGRESS before starting
         task.status = TaskStatus.PROCESSING
@@ -132,6 +111,7 @@ def start_webtoon_generation_task(self, task_id: str, request_data: Dict[str, An
             asyncio.set_event_loop(loop)
             
             # Run the async function in this loop and get the result
+            # We're passing task_id and the request_data from the retrieved task
             result = loop.run_until_complete(generate_webtoon_async(task_id, request_data))
             
             # Clean up the loop
@@ -143,12 +123,12 @@ def start_webtoon_generation_task(self, task_id: str, request_data: Dict[str, An
             raise
         
         # Double-check that task status is updated to COMPLETED
-        task = asyncio.run(task_repo.get_by_id(task_id))
+        task = task_repo.get_by_id_sync(task_id)
         if task and task.status != TaskStatus.COMPLETED:
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.now(timezone.utc)
             task.result = result
-            asyncio.run(task_repo.save(task))
+            task_repo.save_sync(task)
             logger.debug(f"Double-check update: task {task_id} status set to COMPLETED")
         
         logger.debug(f"CELERY TASK EXECUTION COMPLETE - Task {task_name} with ID {task_id_celery}")
@@ -165,14 +145,14 @@ def start_webtoon_generation_task(self, task_id: str, request_data: Dict[str, An
             storage = FileStorage(storage_path)
             task_repo = TaskRepository(storage)
             
-            # Use asyncio.run to execute async methods in a sync context
-            task = asyncio.run(task_repo.get_by_id(task_id))
+            # Use sync methods to avoid asyncio.run issues in Celery worker
+            task = task_repo.get_by_id_sync(task_id)
             if task:
                 task.status = TaskStatus.FAILED
                 task.error_message = str(e)
                 task.completed_at = datetime.now(timezone.utc)
-                # Use asyncio.run to execute async save method
-                asyncio.run(task_repo.save(task))
+                # Use sync methods to avoid asyncio.run issues
+                task_repo.save_sync(task)
                 logger.debug(f"Updated task {task_id} status to FAILED")
         except Exception as inner_e:
             logger.error(f"Failed to update task status to FAILED: {str(inner_e)}", exc_info=True)
@@ -218,43 +198,18 @@ async def generate_webtoon_async(
             }
         )
 
-        # Get services (in real implementation, properly initialize these)
+        # Get services needed for generation
         from app.application.dto.generation_dto import GenerationRequestDTO
         from app.application.services.generation_service import GenerationService
         from app.config import get_settings
-        from app.domain.repositories.task_repository import TaskRepository
-        from app.domain.repositories.webtoon_repository import WebtoonRepository
-        # TaskStatus is already imported at the top-level
-        from app.application.interfaces.storage_provider import StorageProvider
         from app.infrastructure.ai.openai_provider import OpenAIProvider
         from app.infrastructure.image.stability_provider import StabilityProvider
-        from app.infrastructure.storage.file_storage import FileStorage
 
-
-        # Initialize storage and repositories based on settings
-        # Handle both storage_type (standard config) and storage_provider (docker settings)
-        # settings is now properly imported at the top of the file
+        # Get application settings
         settings = get_settings()
-        storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "redis"))
-        
-        if storage_type == "file":
-            # Handle both file_storage_path (standard config) and storage_path (docker settings)
-            storage_path = getattr(settings, "file_storage_path", getattr(settings, "storage_path", "./storage"))
-            storage = FileStorage(storage_path)
-        elif storage_type == "redis":
-            # Use Redis storage
-            from app.infrastructure.storage.redis_provider import RedisProvider
-            redis_url = getattr(settings, "redis_url", os.environ.get("REDIS_URL", "redis://redis:6379/0"))
-            storage = RedisProvider(redis_url)
-            logger.info(f"Using Redis storage at {redis_url}")
-        else:
-            # Fallback to memory storage only as last resort
-            from app.infrastructure.storage.memory_storage import MemoryStorage
-            storage = MemoryStorage()
-            logger.warning("Using in-memory storage which is temporary and not persisted!")
-            
-        webtoon_repo = WebtoonRepository(storage)
-        task_repo = TaskRepository(storage)
+
+        # Initialize storage and repositories using the centralized helper function
+        storage, task_repo, webtoon_repo = _get_repositories()
         
         # Update task status to in-progress - use synchronous methods
         task = task_repo.get_by_id_sync(task_id) if hasattr(task_repo, 'get_by_id_sync') else await task_repo.get_by_id(task_id)
@@ -378,8 +333,20 @@ async def generate_webtoon_async(
             task_id, 95.0, "Finalizing webtoon..."
         )
 
-        # Create webtoon entity and save with dynamically generated UUID
-        webtoon_id = str(uuid4())
+        # Get the existing webtoon_id from request_data, which was created as a placeholder
+        webtoon_id = request_data.get("webtoon_id", None)
+        
+        # IMPORTANT: We must always have a webtoon_id at this point
+        if not webtoon_id:
+            # Fallback to creating a new ID if somehow no webtoon_id was provided
+            webtoon_id = str(uuid4())
+            logger.warning(f"No webtoon_id found in request data, creating new UUID: {webtoon_id}")
+        else:
+            logger.info(f"Using existing webtoon_id from request data: {webtoon_id}")
+            
+        # Ensure webtoon_id is a string
+        if isinstance(webtoon_id, UUID):
+            webtoon_id = str(webtoon_id)
 
         result = {
             "webtoon_id": webtoon_id,
@@ -397,13 +364,44 @@ async def generate_webtoon_async(
             from app.domain.value_objects.dimensions import PanelDimensions, PanelSize
             from app.domain.value_objects.position import Position
             
-            # Create a new webtoon entity
-            webtoon = Webtoon(
-                id=UUID(webtoon_id),
-                title=story_data.get("title", "Generated Webtoon"),
-                description=story_data.get("description", ""),
-                art_style=art_style_str
-            )
+            # We already have webtoon_repo initialized from _get_repositories() earlier in the function
+            # No need to create a new WebtoonRepository instance
+            
+            # ALWAYS use the EXACT SAME ID that was passed in from the request_data
+            # This ensures we update the placeholder webtoon created during API call
+            webtoon_uuid = UUID(webtoon_id)
+            logger.info(f"Attempting to fetch existing webtoon with ID: {webtoon_id}")
+            
+            # Fetch the existing webtoon using the repository from _get_repositories()
+            try:
+                # Use synchronous method if available, otherwise wrap async call
+                if hasattr(webtoon_repo, 'get_by_id_sync'):
+                    existing_webtoon = webtoon_repo.get_by_id_sync(webtoon_uuid)
+                else:
+                    existing_webtoon = await webtoon_repo.get_by_id(webtoon_uuid)
+                    
+                if existing_webtoon:
+                    logger.info(f"Successfully found existing webtoon with ID {webtoon_id}, updating it")
+                    webtoon = existing_webtoon
+                    webtoon.title = story_data.get("title", "Generated Webtoon")
+                    webtoon.description = story_data.get("description", "")
+                    webtoon.art_style = art_style_str
+                    # Clear existing panels if any (placeholder likely had none)
+                    webtoon.panels = []
+                else:
+                    logger.warning(f"No existing webtoon found with ID {webtoon_id}, creating new webtoon")
+                    # Create new webtoon with the SAME ID
+                    webtoon = Webtoon(
+                        id=webtoon_uuid,
+                        title=story_data.get("title", "Generated Webtoon"),
+                        description=story_data.get("description", ""),
+                        art_style=art_style_str
+                    )
+            except Exception as e:
+                # Log the error but don't swallow it - we need to know if something is wrong
+                # with our storage layer
+                logger.error(f"Error fetching webtoon with ID {webtoon_id}: {str(e)}")
+                raise Exception(f"Failed to fetch or create webtoon with ID {webtoon_id}: {str(e)}")
             
             # Create and add panels to the webtoon
             for i, panel_data in enumerate(generated_panels):
@@ -448,15 +446,14 @@ async def generate_webtoon_async(
                 # Add panel to webtoon
                 webtoon.add_panel(panel)
             
-            # Initialize the webtoon repository directly
-            # We already have storage initialized from earlier in the function
-            webtoon_repository = WebtoonRepository(storage)
+            # We already initialized the webtoon_repository above
+            # No need to initialize it again
             
-            # Save the webtoon entity to Redis using sync method if available
-            if hasattr(webtoon_repository, 'save_sync'):
-                webtoon_repository.save_sync(webtoon)
+            # Save the webtoon entity to storage using the centralized repository
+            if hasattr(webtoon_repo, 'save_sync'):
+                webtoon_repo.save_sync(webtoon)
             else:
-                await webtoon_repository.save(webtoon)
+                await webtoon_repo.save(webtoon)
             logger.info(f"Saved webtoon entity to repository with ID: {webtoon_id} and {len(webtoon.panels)} panels")
         except Exception as webtoon_save_error:
             logger.error(f"Failed to save webtoon entity: {str(webtoon_save_error)}", exc_info=True)
@@ -473,26 +470,8 @@ async def generate_webtoon_async(
         )
 
         # Update task status in the database
-        # Initialize storage with the same pattern as the main function
-        # settings is now properly imported at the top of the file
-        settings = get_settings()
-        storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "redis"))
-        if storage_type == "file":
-            storage_path = getattr(settings, "file_storage_path", getattr(settings, "storage_path", "./storage"))
-            from app.infrastructure.storage.file_storage import FileStorage
-            storage = FileStorage(storage_path)
-        elif storage_type == "redis":
-            # Use Redis storage
-            from app.infrastructure.storage.redis_provider import RedisProvider
-            redis_url = getattr(settings, "redis_url", os.environ.get("REDIS_URL", "redis://redis:6379/0"))
-            storage = RedisProvider(redis_url)
-            logger.info(f"Using Redis storage for task update at {redis_url}")
-        else:
-            from app.infrastructure.storage.memory_storage import MemoryStorage
-            storage = MemoryStorage()
-            logger.warning("Using in-memory storage for task update which is temporary!")
-        
-        task_repository = TaskRepository(storage)
+        # Use centralized repository initialization 
+        storage, task_repository, webtoon_repo = _get_repositories()
         # Use synchronous method if available, otherwise wrap async call
         if hasattr(task_repository, 'get_by_id_sync'):
             task = task_repository.get_by_id_sync(task_id)
@@ -529,8 +508,8 @@ async def generate_webtoon_async(
             from app.application.services.webtoon_service import WebtoonService
             from app.utils.webtoon_renderer import WebtoonRenderer
             
-            # Create webtoon service directly
-            webtoon_repo = WebtoonRepository(storage)
+            # We already have webtoon_repo initialized from _get_repositories()
+            # Just use that instance for the webtoon service
             renderer = WebtoonRenderer()
             webtoon_service = WebtoonService(webtoon_repo, renderer)
             
@@ -557,27 +536,8 @@ async def generate_webtoon_async(
     except Exception as e:
         logger.error(f"Error in async generation {task_id}: {str(e)}")
         
-        # Update task status in the database for failures
-        # Initialize storage similar to the main function body
-        # settings is now properly imported at the top of the file
-        settings = get_settings()
-        storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "redis"))
-        if storage_type == "file":
-            storage_path = getattr(settings, "file_storage_path", getattr(settings, "storage_path", "./storage"))
-            from app.infrastructure.storage.file_storage import FileStorage
-            error_storage = FileStorage(storage_path)
-        elif storage_type == "redis":
-            # Use Redis storage
-            from app.infrastructure.storage.redis_provider import RedisProvider
-            redis_url = getattr(settings, "redis_url", os.environ.get("REDIS_URL", "redis://redis:6379/0"))
-            error_storage = RedisProvider(redis_url)
-            logger.info(f"Using Redis storage for error handling at {redis_url}")
-        else:
-            from app.infrastructure.storage.memory_storage import MemoryStorage
-            error_storage = MemoryStorage()
-            logger.warning("Using in-memory storage for error handling which is temporary!")
-        
-        task_repository = TaskRepository(error_storage)
+        # Update task status in the database using centralized repository initialization
+        _, task_repository, _ = _get_repositories()
         task = await task_repository.get_by_id(task_id)
         if task:
             task.status = TaskStatus.FAILED
@@ -636,38 +596,10 @@ def start_panel_generation_task(self, task_id: str, request_data: Dict[str, Any]
     
     logger.info(f"Starting panel generation task {task_id} (celery ID: {task_id_celery})")
     
-    # Initialize storage directly here for consistent file storage usage
+    # Initialize storage and repositories using the centralized helper function
     try:
-        # Get settings
-        from app.config import get_settings
-        settings = get_settings()
-        
-        # Initialize storage with proper settings for Docker environment
-        # Force file storage for consistency
-        from app.infrastructure.storage.file_storage import FileStorage
-        
-        # Handle both standard and Docker settings paths
-        storage_type = getattr(settings, "storage_type", getattr(settings, "storage_provider", "file"))        
-        storage_path = getattr(settings, "file_storage_path", getattr(settings, "storage_path", "/app/storage"))
-        
-        # Log the storage configuration for debugging
-        logger.debug(f"Using storage type: {storage_type} at path: {storage_path}")
-        
-        # Use storage based on configuration
-        logger.debug(f"Initializing storage of type '{storage_type}' and task repository")
-        if storage_type == "file":
-            storage = FileStorage(storage_path)
-            logger.info(f"Using file storage at {storage_path}")
-        elif storage_type == "redis":
-            from app.infrastructure.storage.redis_provider import RedisProvider
-            redis_url = getattr(settings, "redis_url", os.environ.get("REDIS_URL", "redis://redis:6379/0"))
-            storage = RedisProvider(redis_url)
-            logger.info(f"Using Redis storage at {redis_url}")
-        else:
-            from app.infrastructure.storage.memory_storage import MemoryStorage
-            storage = MemoryStorage()
-            logger.warning("Using in-memory storage which is temporary and not persisted!")
-        task_repo = TaskRepository(storage)
+        # Use the centralized repository initialization
+        storage, task_repo, webtoon_repo = _get_repositories()
         
         # Check if task exists in storage before updating
         # Use asyncio.run to execute the coroutine in a sync context

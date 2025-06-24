@@ -57,18 +57,25 @@ def get_image_generator(
     )
 
 
-def get_storage_provider(
-    settings: Settings = Depends(get_settings),
-) -> StorageProvider:
-    """Get storage provider instance"""
+def create_storage_provider(settings: Settings) -> StorageProvider:
+    """Create a storage provider instance based on settings
+    This function can be called from anywhere, not just within FastAPI's dependency injection system
+    """
     if settings.storage_type == "file":
         return FileStorage(settings.file_storage_path)
     elif settings.storage_type == "redis":
-        from app.infrastructure.storage.redis_provider import RedisProvider
-        return RedisProvider(settings.redis_url)
+        from app.infrastructure.storage.redis_storage import RedisStorage
+        return RedisStorage(settings.redis_url)
     else:
         # Default to file storage
         return FileStorage(settings.file_storage_path)
+
+
+def get_storage_provider(
+    settings: Settings = Depends(get_settings),
+) -> StorageProvider:
+    """Get storage provider instance as a FastAPI dependency"""
+    return create_storage_provider(settings)
 
 
 def get_redis_cache(
@@ -136,16 +143,8 @@ def get_generation_service(
     )
 
 
-def get_redis_storage_provider(
-    settings: Settings = Depends(get_settings),
-) -> StorageProvider:
-    """Get Redis-specific storage provider for chat functionality"""
-    from app.infrastructure.storage.redis_provider import RedisProvider
-    return RedisProvider(settings.redis_url)
-
-
 async def get_chat_repository_dep(
-    storage: StorageProvider = Depends(get_redis_storage_provider),
+    storage: StorageProvider = Depends(get_storage_provider),
 ) -> ChatRepository:
     """Get chat repository instance"""
     return ChatRepositoryRedis(storage=storage)
@@ -200,7 +199,7 @@ async def get_chat_handler_for_websocket() -> ChatHandler:
     
     if not handler.chat_service:
         # Get chat service manually
-        storage_provider = get_redis_storage_provider(get_settings())
+        storage_provider = create_storage_provider(get_settings())
         chat_repo = ChatRepositoryRedis(storage=storage_provider)
         ai_provider = get_ai_provider(get_settings())
         webtoon_repo = get_webtoon_repository(storage_provider)
