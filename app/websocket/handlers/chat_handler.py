@@ -4,73 +4,120 @@ WebSocket handler for real-time chat functionality
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 from uuid import UUID, uuid4
 
+from fastapi import WebSocket
+
 from app.application.services.chat_service import ChatService
-from app.websocket.connection_manager import get_connection_manager
+from app.websocket.connection_manager import ConnectionManager, get_connection_manager
+from app.websocket.room_manager import get_room_manager
+from app.websocket.handlers.base_handler import BaseWebSocketHandler, message_handler
 from app.websocket.handlers.tool_handler import get_tool_handler
+from app.websocket.exceptions import WebSocketValidationError
 
 
 logger = logging.getLogger(__name__)
 
 
-class ChatHandler:
+class ChatHandler(BaseWebSocketHandler):
     """Handle real-time chat functionality for webtoon collaboration"""
 
-    def __init__(self, chat_service: Optional[ChatService] = None):
-        self.connection_manager = get_connection_manager()
-        self.chat_rooms: Dict[str, List[str]] = {}  # room_id -> list of client_ids
-        self.client_rooms: Dict[str, str] = {}  # client_id -> room_id
-        self.chat_service = chat_service  # Can be None for backward compatibility
+    def __init__(
+        self, 
+        chat_service: Optional[ChatService] = None, 
+        connection_manager: Optional[ConnectionManager] = None,
+        room_manager = None
+    ):
+        """Initialize the chat handler.
+        
+        Args:
+            chat_service: The chat service for business logic and persistence
+            connection_manager: The WebSocket connection manager
+            room_manager: The room manager for handling room operations
+        """
+        super().__init__(connection_manager=connection_manager, chat_service=chat_service)
+        self.room_manager = room_manager or get_room_manager()
+        self.chat_service = chat_service  # Keep for backward compatibility
 
-    async def handle_join_room(self, client_id: str, message: Dict[str, Any]):
-        """Handle client joining a chat room"""
+    @message_handler("join_room")
+    async def handle_join_room(
+        self, 
+        client_id: str, 
+        message: Dict[str, Any], 
+        websocket: Optional[WebSocket] = None
+    ):
+        """Handle client joining a chat room
+        
+        Message format:
+        {
+            "type": "join_room",
+            "room_id": "<uuid-string>"
+        }
+        """
         room_id = message.get("room_id")
         if not room_id:
-            await self.connection_manager.send_personal_message(
-                {"type": "error", "message": "room_id is required"}, client_id
+            await self.handle_error(
+                client_id=client_id,
+                message=message,
+                error=WebSocketValidationError("room_id is required"),
+                websocket=websocket
             )
             return
 
         try:
             # Try to parse as UUID to validate format and for database storage
             webtoon_id = UUID(room_id)
-        except ValueError:
-            await self.connection_manager.send_personal_message(
-                {"type": "error", "message": "Invalid room_id format. Must be a valid UUID."}, client_id
+        except ValueError as e:
+            await self.handle_error(
+                client_id=client_id,
+                message=message,
+                error=ValueError("Invalid room_id format. Must be a valid UUID."),
+                websocket=websocket
             )
             return
 
         # Remove client from previous room if any
         await self._leave_current_room(client_id)
 
-        # Add client to new room
-        if room_id not in self.chat_rooms:
-            self.chat_rooms[room_id] = []
-
-        self.chat_rooms[room_id].append(client_id)
-        self.client_rooms[client_id] = room_id
-
-        # Notify client of successful join
-        join_message = {
-            "type": "chat_room_joined",
-            "room_id": room_id,
-            "participants": len(self.chat_rooms[room_id]),
-        }
-        await self.connection_manager.send_personal_message(join_message, client_id)
-
-        # Notify other participants
-        await self._broadcast_to_room(
-            room_id,
-            {
-                "type": "participant_joined",
+        # Add client to new room using RoomManager
+        try:
+            # Join the new room
+            await self.room_manager.join_room(client_id, room_id, websocket)
+            
+            # Get updated room info
+            room_info = await self.room_manager.get_room_info(room_id)
+            
+            # Notify client of successful join
+            join_message = {
+                "type": "chat_room_joined",
                 "room_id": room_id,
-                "participants": len(self.chat_rooms[room_id]),
-            },
-            exclude_client=client_id,
-        )
-        
+                "participants": room_info["participant_count"],
+            }
+            await self.connection_manager.send_personal_message(join_message, client_id)
+            
+            # Notify other participants
+            await self.room_manager.broadcast_to_room(
+                room_id,
+                {
+                    "type": "participant_joined",
+                    "client_id": client_id,
+                    "participants": room_info["participant_count"],
+                },
+                exclude_client=client_id
+            )
+            
+            logger.info(f"Client {client_id} joined room {room_id}")
+            
+        except WebSocketValidationError as e:
+            await self.handle_error(
+                client_id=client_id,
+                message=message,
+                error=e,
+                websocket=websocket
+            )
+            return
+            
         # If chat service is available, send chat history to the client
         if self.chat_service:
             try:
@@ -101,28 +148,102 @@ class ChatHandler:
 
         logger.info(f"Client {client_id} joined chat room {room_id}")
 
-    async def handle_leave_room(self, client_id: str, message: Dict[str, Any]):
-        """Handle client leaving a chat room"""
-        await self._leave_current_room(client_id)
+    @message_handler("leave_room")
+    async def handle_leave_room(
+        self,
+        client_id: str,
+        message: Dict[str, Any],
+        websocket: Optional[WebSocket] = None
+    ):
+        """Handle client leaving a chat room
+        
+        Message format:
+        {
+            "type": "leave_room"
+        }
+        """
+        # Get the room_id before leaving
+        room_id = await self.room_manager.get_client_room(client_id)
+        if not room_id:
+            logger.warning(f"Client {client_id} tried to leave but was not in any room")
+            return
+            
+        # Leave the room using RoomManager
+        left_room_id = await self.room_manager.leave_room(client_id)
+        
+        if left_room_id:
+            # Get updated room info
+            try:
+                room_info = await self.room_manager.get_room_info(left_room_id)
+                participant_count = room_info["participant_count"]
+            except WebSocketValidationError:
+                # Room no longer exists (last participant)
+                participant_count = 0
+                
+            # Notify other participants
+            await self.room_manager.broadcast_to_room(
+                left_room_id,
+                {
+                    "type": "participant_left",
+                    "client_id": client_id,
+                    "participants": participant_count
+                },
+                exclude_client=client_id
+            )
+            
+            logger.info(f"Client {client_id} left room {left_room_id}")
+        
+        # Notify the client they've left the room
+        await self.connection_manager.send_personal_message(
+            {
+                "type": "chat_room_left",
+                "room_id": room_id
+            },
+            client_id
+        )
 
-    async def handle_chat_message(self, client_id: str, message: Dict[str, Any]):
-        """Handle chat message from client"""
+    @message_handler("chat_message")
+    async def handle_chat_message(
+        self,
+        client_id: str,
+        message: Dict[str, Any],
+        websocket: Optional[WebSocket] = None
+    ):
+        """Handle chat message from client
+        
+        Message format:
+        {
+            "type": "chat_message",
+            "text": "message content",
+            "role": "user",  # Optional, defaults to "user"
+            "tool_calls": []  # Optional, for function/tool calls
+        }
+        """
         logger.info(f"Received chat message from client {client_id}: {message}")
-        room_id = self.client_rooms.get(client_id)
+        
+        # Get the room_id from room manager
+        room_id = await self.room_manager.get_client_room(client_id)
+        if not room_id:
+            logger.warning(f"Client {client_id} sent message but is not in any room")
+            return
         if not room_id:
             logger.warning(f"Client {client_id} tried to send message without joining a room first")
-            await self.connection_manager.send_personal_message(
-                {"type": "error", "message": "You must join a room first"},
-                client_id,
+            await self.handle_error(
+                client_id=client_id,
+                message=message,
+                error=ValueError("You must join a room first"),
+                websocket=websocket
             )
             return
 
         # Check for message content in either 'text' or 'content' field (for compatibility)
         chat_text = message.get("text", "").strip() or message.get("content", "").strip()
         if not chat_text:
-            await self.connection_manager.send_personal_message(
-                {"type": "error", "message": "Message text cannot be empty"},
-                client_id,
+            await self.handle_error(
+                client_id=client_id,
+                message=message,
+                error=ValueError("Message text cannot be empty"),
+                websocket=websocket
             )
             return
 
@@ -147,7 +268,11 @@ class ChatHandler:
         }
 
         # Broadcast to all room participants
-        await self._broadcast_to_room(room_id, chat_message)
+        await self.room_manager.broadcast_to_room(
+            room_id,
+            chat_message,
+            exclude_client=client_id
+        )
 
         logger.debug(
             f"Chat message from {client_id} in room {room_id}: {chat_text[:50]}"
@@ -193,7 +318,11 @@ class ChatHandler:
                         "timestamp": datetime.now(UTC).isoformat(),
                     }
                     logger.debug(f"Sending typing indicator to room {room_id}")
-                    await self._broadcast_to_room(room_id, typing_indicator)
+                    await self.room_manager.broadcast_to_room(
+                        room_id, 
+                        typing_indicator, 
+                        exclude_client=client_id
+                    )
                     
                     # Try to parse room_id as UUID (webtoon_id)
                     webtoon_id = UUID(room_id)
@@ -207,7 +336,10 @@ class ChatHandler:
                         logger.info(f"Received AI response: id={ai_message.id}, content_length={content_length}, has_tool_calls={bool(ai_message.tool_calls)}")
                         # Stop typing indicator
                         typing_indicator["is_typing"] = False
-                        await self._broadcast_to_room(room_id, typing_indicator)
+                        await self.room_manager.broadcast_to_room(
+                            room_id, 
+                            typing_indicator
+                        )
                         
                         # Format and broadcast AI response
                         ai_response = {
@@ -223,7 +355,10 @@ class ChatHandler:
                         
                         # Broadcast AI response to all room participants
                         logger.info(f"Broadcasting AI response to room {room_id}")
-                        await self._broadcast_to_room(room_id, ai_response)
+                        await self.room_manager.broadcast_to_room(
+                            room_id, 
+                            ai_response
+                        )
                         logger.info(f"AI response successfully sent to room {room_id}")
                         
                         # If AI response contains tool calls, process them
@@ -252,9 +387,22 @@ class ChatHandler:
                         client_id
                     )
 
-    async def handle_typing_indicator(self, client_id: str, message: Dict[str, Any]):
-        """Handle typing indicator"""
-        room_id = self.client_rooms.get(client_id)
+    @message_handler("typing_indicator")
+    async def handle_typing_indicator(
+        self, 
+        client_id: str, 
+        message: Dict[str, Any], 
+        websocket: Optional[WebSocket] = None
+    ):
+        """Handle typing indicator
+        
+        Message format:
+        {
+            "type": "typing_indicator",
+            "is_typing": true
+        }
+        """
+        room_id = await self.room_manager.get_client_room(client_id)
         if not room_id:
             return
 
@@ -269,82 +417,164 @@ class ChatHandler:
         }
 
         # Broadcast to other room participants
-        await self._broadcast_to_room(room_id, typing_message, exclude_client=client_id)
+        await self.room_manager.broadcast_to_room(
+            room_id, 
+            typing_message, 
+            exclude_client=client_id
+        )
 
     async def handle_client_disconnect(self, client_id: str):
-        """Handle client disconnection"""
-        await self._leave_current_room(client_id)
+        """
+        Handle client disconnection
+        
+        Args:
+            client_id: The ID of the disconnecting client
+        """
+        # Get the room ID before leaving
+        room_id = await self.room_manager.get_client_room(client_id)
+        
+        # Remove client from room
+        left_room_id = await self.room_manager.leave_room(client_id)
+        
+        if left_room_id:
+            # Get updated room info
+            try:
+                room_info = await self.room_manager.get_room_info(left_room_id)
+                participant_count = room_info["participant_count"]
+            except WebSocketValidationError:
+                # Room no longer exists (last participant)
+                participant_count = 0
+                
+            # Notify other participants
+            await self.room_manager.broadcast_to_room(
+                left_room_id,
+                {
+                    "type": "participant_left",
+                    "client_id": client_id,
+                    "participants": participant_count
+                },
+                exclude_client=client_id
+            )
         
         # Notify the tool handler about the disconnect
         tool_handler = get_tool_handler()
         await tool_handler.handle_client_disconnect(client_id)
+        
+        logger.info(f"Client {client_id} disconnected from room {room_id}")
 
-    async def _leave_current_room(self, client_id: str):
-        """Remove client from their current room"""
-        room_id = self.client_rooms.get(client_id)
+    async def _leave_current_room(self, client_id: str) -> Optional[str]:
+        """
+        Remove client from their current room if any
+        
+        Args:
+            client_id: The ID of the client leaving the room
+            
+        Returns:
+            The room_id that was left, or None if client wasn't in a room
+        """
+        room_id = await self.room_manager.get_client_room(client_id)
         if not room_id:
-            return
-
-        # Remove from room
-        if room_id in self.chat_rooms and client_id in self.chat_rooms[room_id]:
-            self.chat_rooms[room_id].remove(client_id)
-
-            # Clean up empty rooms
-            if not self.chat_rooms[room_id]:
-                del self.chat_rooms[room_id]
-            else:
-                # Notify remaining participants
-                await self._broadcast_to_room(
-                    room_id,
-                    {
-                        "type": "participant_left",
-                        "room_id": room_id,
-                        "participants": len(self.chat_rooms[room_id]),
-                    },
-                )
-
-        # Remove client room mapping
-        if client_id in self.client_rooms:
-            del self.client_rooms[client_id]
-
-        logger.info(f"Client {client_id} left chat room {room_id}")
-
+            return None
+            
+        # Remove client from room using RoomManager
+        left_room_id = await self.room_manager.leave_room(client_id)
+        
+        if left_room_id:
+            # Get updated room info
+            try:
+                room_info = await self.room_manager.get_room_info(room_id)
+                participant_count = room_info["participant_count"]
+            except WebSocketValidationError:
+                # Room no longer exists (last participant)
+                participant_count = 0
+            
+            # Notify other participants
+            await self.room_manager.broadcast_to_room(
+                room_id,
+                {
+                    "type": "participant_left",
+                    "client_id": client_id,
+                    "participants": participant_count
+                },
+                exclude_client=client_id
+            )
+            
+            logger.info(f"Client {client_id} left room {left_room_id}")
+            
+        return left_room_id
+        
     async def _broadcast_to_room(
         self, room_id: str, message: Dict[str, Any], exclude_client: str = None
     ):
-        """Broadcast message to all clients in a room"""
-        if room_id not in self.chat_rooms:
-            return
+        """
+        Broadcast message to all clients in a room
+        
+        Args:
+            room_id: The ID of the room to broadcast to
+            message: The message to broadcast
+            exclude_client: Optional client ID to exclude from the broadcast
+        """
+        try:
+            await self.room_manager.broadcast_to_room(
+                room_id,
+                message,
+                exclude_client=exclude_client
+            )
+        except WebSocketValidationError as e:
+            logger.warning(f"Failed to broadcast to room {room_id}: {str(e)}")
 
-        for client_id in self.chat_rooms[room_id]:
-            if exclude_client and client_id == exclude_client:
-                continue
-
-            await self.connection_manager.send_personal_message(message, client_id)
-
-    def get_room_info(self, room_id: str) -> Dict[str, Any]:
-        """Get information about a chat room"""
-        if room_id not in self.chat_rooms:
+    async def get_room_info(self, room_id: str) -> Dict[str, Any]:
+        """
+        Get information about a chat room
+        
+        Args:
+            room_id: The ID of the room to get info for
+            
+        Returns:
+            Dictionary containing room information
+        """
+        try:
+            room_info = await self.room_manager.get_room_info(room_id)
+            return {
+                "exists": True,
+                "room_id": room_id,
+                "participant_count": room_info["participant_count"],
+                "participants": room_info["participants"],
+            }
+        except WebSocketValidationError:
             return {"exists": False}
 
-        return {
-            "exists": True,
-            "room_id": room_id,
-            "participant_count": len(self.chat_rooms[room_id]),
-            "participants": self.chat_rooms[room_id],
-        }
-
-    def get_client_info(self, client_id: str) -> Dict[str, Any]:
-        """Get information about a client"""
-        room_id = self.client_rooms.get(client_id)
+    async def get_client_info(self, client_id: str) -> Dict[str, Any]:
+        """
+        Get information about a client
+        
+        Args:
+            client_id: The ID of the client to get info for
+            
+        Returns:
+            Dictionary containing client information
+        """
+        room_id = await self.room_manager.get_client_room(client_id)
         return {
             "client_id": client_id,
             "current_room": room_id,
             "in_room": room_id is not None,
         }
         
-    async def handle_tool_discovery(self, client_id: str, message: Dict[str, Any] = None):
-        """Handle tool discovery request"""
+    @message_handler("discover_tools")
+    async def handle_tool_discovery(
+        self, 
+        client_id: str, 
+        message: Dict[str, Any], 
+        websocket: Optional[WebSocket] = None
+    ):
+        """Handle tool discovery request
+        
+        Message format:
+        {
+            "type": "discover_tools"
+        }
+        """
         tool_handler = get_tool_handler()
         await tool_handler.handle_tool_discovery(client_id)
     

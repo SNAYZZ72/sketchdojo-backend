@@ -1,112 +1,147 @@
 """
 Exception handlers for the API layer
 """
+from datetime import datetime, UTC
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from typing import Any, Dict, Optional, Type, Union
 
-from app.utils.exceptions import (
-    SketchDojoException as DomainException,
-    EntityNotFoundError as EntityNotFoundException,
-    ValidationError as ValidationException
+from app.core.error_handling.errors import (
+    AppError,
+    ValidationError,
+    NotFoundError,
+    UnauthorizedError,
+    ForbiddenError,
+    ConflictError,
+    BadRequestError,
+    InternalServerError
 )
+from app.schemas.error_schemas import ErrorResponse
+from pydantic import ValidationError as PydanticValidationError
 
-# If this is needed, define it here since it doesn't exist
-class PermissionDeniedException(DomainException):
-    """Raised when a user lacks permission for an action"""
-    pass
-
-
-class APIException(Exception):
-    """Base exception for API layer"""
-    status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR
-    detail: str = "An unexpected error occurred"
-
-    def __init__(self, detail: Optional[str] = None, status_code: Optional[int] = None):
-        if detail:
-            self.detail = detail
-        if status_code:
-            self.status_code = status_code
-        super().__init__(self.detail)
-
-
-class NotFoundException(APIException):
-    """Resource not found exception"""
-    status_code = status.HTTP_404_NOT_FOUND
-    detail = "Resource not found"
-
-
-class BadRequestException(APIException):
-    """Bad request exception"""
-    status_code = status.HTTP_400_BAD_REQUEST
-    detail = "Bad request"
-
-
-class UnauthorizedException(APIException):
-    """Unauthorized exception"""
-    status_code = status.HTTP_401_UNAUTHORIZED
-    detail = "Unauthorized"
-
-
-class ForbiddenException(APIException):
-    """Forbidden exception"""
-    status_code = status.HTTP_403_FORBIDDEN
-    detail = "Forbidden"
-
+async def create_error_response(
+    status_code: int,
+    message: str,
+    error_code: Optional[str] = None,
+    details: Optional[Any] = None,
+) -> JSONResponse:
+    """Create a standardized error response.
+    
+    Args:
+        status_code: HTTP status code
+        message: Human-readable error message
+        error_code: Machine-readable error code
+        details: Additional error details
+        
+    Returns:
+        JSONResponse with standardized error format
+    """
+    error_response = ErrorResponse(
+        error=message,
+        error_code=error_code or f"HTTP_{status_code}",
+        timestamp=datetime.now(UTC).isoformat(),
+        details=details
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content=error_response.model_dump(exclude_none=True)
+    )
 
 def add_exception_handlers(app: FastAPI) -> None:
     """Add exception handlers to the application"""
     
-    # API Exceptions
-    @app.exception_handler(APIException)
-    async def api_exception_handler(request: Request, exc: APIException) -> JSONResponse:
-        return JSONResponse(
+    @app.exception_handler(AppError)
+    async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+        """Handle application-specific errors"""
+        return await create_error_response(
             status_code=exc.status_code,
-            content={"detail": exc.detail}
+            message=str(exc),
+            error_code=exc.error_code,
+            details=exc.details
         )
     
-    # Domain Exceptions
-    @app.exception_handler(EntityNotFoundException)
-    async def entity_not_found_exception_handler(
-        request: Request, exc: EntityNotFoundException
-    ) -> JSONResponse:
-        return JSONResponse(
+    @app.exception_handler(ValidationError)
+    async def validation_error_handler(request: Request, exc: ValidationError) -> JSONResponse:
+        """Handle validation errors"""
+        return await create_error_response(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            message="Validation error",
+            error_code="VALIDATION_ERROR",
+            details=exc.details
+        )
+    
+    @app.exception_handler(NotFoundError)
+    async def not_found_error_handler(request: Request, exc: NotFoundError) -> JSONResponse:
+        """Handle not found errors"""
+        return await create_error_response(
             status_code=status.HTTP_404_NOT_FOUND,
-            content={"detail": str(exc)}
+            message=str(exc) or "Resource not found",
+            error_code="NOT_FOUND"
         )
     
-    @app.exception_handler(ValidationException)
-    async def validation_exception_handler(
-        request: Request, exc: ValidationException
-    ) -> JSONResponse:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": str(exc)}
+    @app.exception_handler(UnauthorizedError)
+    async def unauthorized_error_handler(request: Request, exc: UnauthorizedError) -> JSONResponse:
+        """Handle unauthorized errors"""
+        return await create_error_response(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            message=str(exc) or "Not authenticated",
+            error_code="UNAUTHORIZED"
         )
     
-    @app.exception_handler(PermissionDeniedException)
-    async def permission_denied_exception_handler(
-        request: Request, exc: PermissionDeniedException
-    ) -> JSONResponse:
-        return JSONResponse(
+    @app.exception_handler(ForbiddenError)
+    async def forbidden_error_handler(request: Request, exc: ForbiddenError) -> JSONResponse:
+        """Handle forbidden errors"""
+        return await create_error_response(
             status_code=status.HTTP_403_FORBIDDEN,
-            content={"detail": str(exc)}
+            message=str(exc) or "Permission denied",
+            error_code="FORBIDDEN"
         )
     
-    @app.exception_handler(DomainException)
-    async def domain_exception_handler(
-        request: Request, exc: DomainException
-    ) -> JSONResponse:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": str(exc)}
+    @app.exception_handler(ConflictError)
+    async def conflict_error_handler(request: Request, exc: ConflictError) -> JSONResponse:
+        """Handle conflict errors"""
+        return await create_error_response(
+            status_code=status.HTTP_409_CONFLICT,
+            message=str(exc) or "Resource conflict",
+            error_code="CONFLICT"
         )
-        
-    # Generic exception handler for unhandled exceptions
+    
+    @app.exception_handler(RequestValidationError)
+    @app.exception_handler(PydanticValidationError)
+    async def validation_exception_handler(
+        request: Request, exc: RequestValidationError | PydanticValidationError
+    ) -> JSONResponse:
+        """Handle request validation errors"""
+        if isinstance(exc, RequestValidationError):
+            errors = [{"loc": ".".join(str(loc) for loc in e["loc"]), "msg": e["msg"]} 
+                     for e in exc.errors()]
+        else:
+            errors = [{"loc": ".".join(str(loc) for loc in e["loc"]), "msg": e["msg"]} 
+                     for e in exc.errors()]
+            
+        return await create_error_response(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            message="Request validation failed",
+            error_code="VALIDATION_ERROR",
+            details={"errors": errors}
+        )
+    
     @app.exception_handler(Exception)
-    async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-        # In production, we'd want to log this exception
-        return JSONResponse(
+    async def generic_exception_handler(
+        request: Request, exc: Exception
+    ) -> JSONResponse:
+        """Handle all other exceptions"""
+        logger = app.state.logger if hasattr(app.state, 'logger') else None
+        if logger:
+            logger.error(
+                "Unhandled exception",
+                exc_info=exc,
+                extra={"path": request.url.path, "method": request.method}
+            )
+            
+        return await create_error_response(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"detail": "An unexpected error occurred"}
+            message="An unexpected error occurred",
+            error_code="INTERNAL_SERVER_ERROR"
         )

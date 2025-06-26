@@ -2,11 +2,11 @@
 WebSocket tools for webtoon manipulation
 """
 import logging
-import asyncio
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from app.websocket.connection_manager import get_connection_manager
+from app.infrastructure.notifications.notification_types import NotificationType
+from app.infrastructure.notifications.redis_publisher import get_redis_publisher
 
 from app.websocket.handlers.tool_handler import Tool
 from app.application.services.generation_service import GenerationService
@@ -53,6 +53,10 @@ class CreatePanelTool(Tool):
                         "type": "string",
                         "description": "Mood of the scene (e.g., happy, sad, tense)",
                         "default": "neutral"
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "The ID of the task to associate with this operation for notifications"
                     }
                 },
                 "required": ["webtoon_id", "scene_description"]
@@ -67,6 +71,7 @@ class CreatePanelTool(Tool):
         art_style = ensure_art_style_string(parameters.get("art_style", "webtoon"))
         character_names = parameters.get("character_names", [])
         mood = parameters.get("mood", "neutral")
+        task_id = parameters.get("task_id", str(UUID()))
         
         # Start panel generation
         result_dto = await self.generation_service.start_panel_generation(
@@ -78,17 +83,24 @@ class CreatePanelTool(Tool):
         )
         
         # After successfully initiating panel generation, fetch the current webtoon HTML
-        # to provide an immediate update to the client
+        # to provide an immediate update to the client via Redis
         try:
-            # Get connection manager
-            connection_manager = get_connection_manager()
+            # Get notification publisher
+            notification_publisher = get_redis_publisher()
             
             # Fetch current HTML content
             html_content = await self.webtoon_service.get_webtoon_html_content(UUID(webtoon_id))
             
-            # Broadcast update if HTML content is available
+            # Publish update if HTML content is available
             if html_content:
-                await connection_manager.broadcast_webtoon_updated(webtoon_id, html_content)
+                notification_publisher.publish(
+                    NotificationType.WEBTOON_UPDATED,
+                    {
+                        "task_id": task_id,
+                        "webtoon_id": webtoon_id,
+                        "html_content": html_content
+                    }
+                )
                 
         except Exception as e:
             logging.error(f"Error sending webtoon HTML update: {str(e)}")
@@ -133,6 +145,10 @@ class EditPanelTool(Tool):
                         "type": "boolean",
                         "description": "Whether to regenerate the panel image",
                         "default": False
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "The ID of the task to associate with this operation for notifications"
                     }
                 },
                 "required": ["webtoon_id", "panel_id"]
@@ -147,6 +163,7 @@ class EditPanelTool(Tool):
         new_scene_description = parameters.get("new_scene_description")
         art_style = parameters.get("art_style")
         regenerate = parameters.get("regenerate", False)
+        task_id = parameters.get("task_id", str(UUID()))
         
         # Get the existing panel
         webtoon = await self.webtoon_service.get_webtoon(UUID(webtoon_id))
@@ -201,15 +218,22 @@ class EditPanelTool(Tool):
         
         # After successfully updating panel, fetch the current webtoon HTML
         try:
-            # Get connection manager
-            connection_manager = get_connection_manager()
+            # Get notification publisher
+            notification_publisher = get_redis_publisher()
             
             # Fetch current HTML content
             html_content = await self.webtoon_service.get_webtoon_html_content(UUID(webtoon_id))
             
-            # Broadcast update if HTML content is available
+            # Publish update if HTML content is available
             if html_content:
-                await connection_manager.broadcast_webtoon_updated(webtoon_id, html_content)
+                notification_publisher.publish(
+                    NotificationType.WEBTOON_UPDATED,
+                    {
+                        "task_id": task_id,
+                        "webtoon_id": webtoon_id,
+                        "html_content": html_content
+                    }
+                )
                 
         except Exception as e:
             logging.error(f"Error sending webtoon HTML update: {str(e)}")
@@ -243,6 +267,10 @@ class RemovePanelTool(Tool):
                     "panel_id": {
                         "type": "string",
                         "description": "The ID of the panel to remove"
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "The ID of the task to associate with this operation for notifications"
                     }
                 },
                 "required": ["webtoon_id", "panel_id"]
@@ -253,6 +281,7 @@ class RemovePanelTool(Tool):
     async def execute(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
         webtoon_id = parameters.get("webtoon_id")
         panel_id = parameters.get("panel_id")
+        task_id = parameters.get("task_id", str(UUID()))
         
         # Remove the panel
         result = await self.webtoon_service.remove_panel(
@@ -265,15 +294,22 @@ class RemovePanelTool(Tool):
         
         # After successfully removing panel, fetch the current webtoon HTML
         try:
-            # Get connection manager
-            connection_manager = get_connection_manager()
+            # Get notification publisher
+            notification_publisher = get_redis_publisher()
             
             # Fetch current HTML content
             html_content = await self.webtoon_service.get_webtoon_html_content(UUID(webtoon_id))
             
-            # Broadcast update if HTML content is available
+            # Publish update if HTML content is available
             if html_content:
-                await connection_manager.broadcast_webtoon_updated(webtoon_id, html_content)
+                notification_publisher.publish(
+                    NotificationType.WEBTOON_UPDATED,
+                    {
+                        "task_id": task_id,
+                        "webtoon_id": webtoon_id,
+                        "html_content": html_content
+                    }
+                )
                 
         except Exception as e:
             logging.error(f"Error sending webtoon HTML update: {str(e)}")
@@ -328,6 +364,10 @@ class AddCharacterTool(Tool):
                     "role": {
                         "type": "string",
                         "description": "Character's role in the story"
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "The ID of the task to associate with this operation for notifications"
                     }
                 },
                 "required": ["webtoon_id", "name", "description"]
@@ -341,7 +381,8 @@ class AddCharacterTool(Tool):
         description = parameters.get("description")
         appearance = parameters.get("appearance", {})
         personality_traits = parameters.get("personality_traits", [])
-        role = parameters.get("role", "Supporting character")
+        role = parameters.get("role", "")
+        task_id = parameters.get("task_id", str(UUID()))
         
         # Create character entity
         character = Character(
@@ -363,15 +404,22 @@ class AddCharacterTool(Tool):
         
         # After successfully adding character, fetch the current webtoon HTML
         try:
-            # Get connection manager
-            connection_manager = get_connection_manager()
+            # Get notification publisher
+            notification_publisher = get_redis_publisher()
             
             # Fetch current HTML content
             html_content = await self.webtoon_service.get_webtoon_html_content(UUID(webtoon_id))
             
-            # Broadcast update if HTML content is available
+            # Publish update if HTML content is available
             if html_content:
-                await connection_manager.broadcast_webtoon_updated(webtoon_id, html_content)
+                notification_publisher.publish(
+                    NotificationType.WEBTOON_UPDATED,
+                    {
+                        "task_id": task_id,
+                        "webtoon_id": webtoon_id,
+                        "html_content": html_content
+                    }
+                )
                 
         except Exception as e:
             logging.error(f"Error sending webtoon HTML update: {str(e)}")
@@ -421,6 +469,10 @@ class AddSpeechBubbleTool(Tool):
                         "description": "Position of the bubble in the panel",
                         "enum": ["top-left", "top-right", "bottom-left", "bottom-right", "center"],
                         "default": "top-right"
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "The ID of the task to associate with this operation for notifications"
                     }
                 },
                 "required": ["webtoon_id", "panel_id", "text"]
@@ -435,6 +487,7 @@ class AddSpeechBubbleTool(Tool):
         text = parameters.get("text")
         bubble_type = parameters.get("bubble_type", "speech")
         position = parameters.get("position", "top-right")
+        task_id = parameters.get("task_id", str(UUID()))
         
         # Add speech bubble to the panel
         result = await self.webtoon_service.add_speech_bubble(
@@ -451,15 +504,22 @@ class AddSpeechBubbleTool(Tool):
         
         # After successfully adding speech bubble, fetch the current webtoon HTML
         try:
-            # Get connection manager
-            connection_manager = get_connection_manager()
+            # Get notification publisher
+            notification_publisher = get_redis_publisher()
             
             # Fetch current HTML content
             html_content = await self.webtoon_service.get_webtoon_html_content(UUID(webtoon_id))
             
-            # Broadcast update if HTML content is available
+            # Publish update if HTML content is available
             if html_content:
-                await connection_manager.broadcast_webtoon_updated(webtoon_id, html_content)
+                notification_publisher.publish(
+                    NotificationType.WEBTOON_UPDATED,
+                    {
+                        "task_id": task_id,
+                        "webtoon_id": webtoon_id,
+                        "html_content": html_content
+                    }
+                )
                 
         except Exception as e:
             logging.error(f"Error sending webtoon HTML update: {str(e)}")

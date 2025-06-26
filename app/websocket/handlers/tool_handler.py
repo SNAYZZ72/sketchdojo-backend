@@ -1,5 +1,8 @@
 """
-WebSocket handler for tool call functionality
+WebSocket handler for tool call functionality.
+
+This module provides functionality for handling tool-related WebSocket messages,
+including tool discovery and execution.
 """
 import logging
 import json
@@ -7,7 +10,10 @@ from typing import Any, Dict, List, Callable, Optional, Type
 from datetime import datetime, UTC
 from uuid import uuid4
 
-from app.websocket.connection_manager import get_connection_manager
+from fastapi import WebSocket
+
+from app.websocket.connection_manager import get_connection_manager, ConnectionManager
+from app.websocket.handlers.base_handler import BaseWebSocketHandler, message_handler
 from app.websocket.events import ToolDiscoveryEvent, ToolCallResultEvent, ToolCallErrorEvent
 
 logger = logging.getLogger(__name__)
@@ -56,49 +62,201 @@ class ToolRegistry:
         return [tool.to_schema() for tool in self.tools.values()]
 
 
-class ToolHandler:
-    """Handle tool calls from WebSocket clients"""
+class ToolHandler(BaseWebSocketHandler):
+    """Handle tool calls from WebSocket clients.
     
-    def __init__(self):
-        self.connection_manager = get_connection_manager()
+    This class handles tool-related WebSocket messages, including tool discovery
+    and execution. It maintains a registry of available tools and manages
+    client permissions for tool usage.
+    """
+    
+    def __init__(self, connection_manager: Optional[ConnectionManager] = None, **dependencies):
+        """Initialize the ToolHandler.
+        
+        Args:
+            connection_manager: The WebSocket connection manager
+            **dependencies: Additional dependencies to be injected into handler methods
+        """
+        super().__init__(connection_manager=connection_manager, **dependencies)
         self.tool_registry = ToolRegistry()
         # Keep track of which clients have permission to use which tools
         self.client_permissions: Dict[str, List[str]] = {}  # client_id -> list of tool_ids
+        
+        # Register built-in tools
+        self._register_builtin_tools()
     
-    def register_tool(self, tool: Tool) -> None:
-        """Register a tool for availability"""
+    def _register_builtin_tools(self) -> None:
+        """Register built-in tools."""
+        self.register_tool(EchoTool())
+        self.register_tool(WeatherTool())
+        logger.info("Registered built-in tools")
+    
+    def register_tool(self, tool: 'Tool') -> None:
+        """Register a tool for availability.
+        
+        Args:
+            tool: The tool to register
+        """
         self.tool_registry.register_tool(tool)
     
+    @message_handler("discover_tools")
+    async def handle_discover_tools(
+        self, client_id: str, message: Dict[str, Any], websocket: Optional[WebSocket] = None
+    ) -> None:
+        """Handle tool discovery request.
+        
+        Message format:
+        {
+            "type": "discover_tools"
+        }
+        """
+        logger.info(f"Client {client_id} requested tool discovery")
+        
+        # Get available tools that the client has permission to use
+        available_tools = []
+        for tool in self.tool_registry.tools.values():
+            if self.check_permission(client_id, tool.tool_id):
+                available_tools.append(tool.to_schema())
+        
+        # Create and send discovery event using the create class method
+        event = ToolDiscoveryEvent.create(
+            client_id=client_id,
+            tools=available_tools
+        )
+        await self.connection_manager.send_personal_message(event.to_dict(), client_id)
+    
+    @message_handler("tool_call")
+    async def handle_tool_call(
+        self, client_id: str, message: Dict[str, Any], websocket: Optional[WebSocket] = None
+    ) -> None:
+        """Handle tool execution request.
+        
+        Message format:
+        {
+            "type": "tool_call",
+            "tool_id": "tool_identifier",
+            "call_id": "unique_call_id",
+            "parameters": {
+                "param1": "value1",
+                ...
+            }
+        }
+        """
+        tool_id = message.get("tool_id")
+        call_id = message.get("call_id", str(uuid4()))
+        parameters = message.get("parameters", {})
+        
+        if not tool_id:
+            error = {
+                "type": "error",
+                "message": "tool_id is required",
+                "original_message": message
+            }
+            await self.send_message(client_id, error)
+            return
+        
+        logger.info(f"Tool call request from client {client_id}: {tool_id} (call_id: {call_id})")
+        
+        # Check permissions
+        if not self.check_permission(client_id, tool_id):
+            error = {
+                "type": "error",
+                "message": f"Permission denied for tool: {tool_id}",
+                "tool_id": tool_id,
+                "call_id": call_id
+            }
+            await self.send_message(client_id, error)
+            return
+        
+        # Get the tool
+        tool = self.tool_registry.get_tool(tool_id)
+        if not tool:
+            error = {
+                "type": "error",
+                "message": f"Tool not found: {tool_id}",
+                "tool_id": tool_id,
+                "call_id": call_id
+            }
+            await self.send_message(client_id, error)
+            return
+        
+        # Execute the tool
+        try:
+            result = await tool.execute(parameters)
+            
+            # Send success response
+            response = ToolCallResultEvent(
+                tool_id=tool_id,
+                call_id=call_id,
+                result=result
+            ).dict()
+            
+        except Exception as e:
+            logger.error(f"Error executing tool {tool_id} for client {client_id}: {str(e)}", exc_info=True)
+            
+            # Send error response
+            response = ToolCallErrorEvent(
+                tool_id=tool_id,
+                call_id=call_id,
+                error=str(e)
+            ).dict()
+        
+        await self.send_message(client_id, response)
+    
     def grant_permissions(self, client_id: str, tool_ids: List[str]) -> None:
-        """Grant tool usage permissions to a client"""
+        """Grant tool usage permissions to a client.
+        
+        Args:
+            client_id: The client ID to grant permissions to
+            tool_ids: List of tool IDs to grant
+        """
         if client_id not in self.client_permissions:
             self.client_permissions[client_id] = []
         
         for tool_id in tool_ids:
             if tool_id not in self.client_permissions[client_id]:
                 self.client_permissions[client_id].append(tool_id)
+        
+        logger.debug(f"Granted permissions to client {client_id} for tools: {', '.join(tool_ids)}")
     
     def revoke_permissions(self, client_id: str, tool_ids: Optional[List[str]] = None) -> None:
-        """Revoke tool usage permissions from a client"""
+        """Revoke tool usage permissions from a client.
+        
+        Args:
+            client_id: The client ID to revoke permissions from
+            tool_ids: Optional list of tool IDs to revoke. If None, revoke all permissions.
+        """
         if client_id not in self.client_permissions:
             return
         
         if tool_ids is None:
             # Revoke all permissions
             del self.client_permissions[client_id]
+            logger.debug(f"Revoked all permissions for client {client_id}")
         else:
             # Revoke specific permissions
             self.client_permissions[client_id] = [
                 tool_id for tool_id in self.client_permissions[client_id] 
                 if tool_id not in tool_ids
             ]
+            logger.debug(f"Revoked permissions for client {client_id} for tools: {', '.join(tool_ids)}")
     
     def check_permission(self, client_id: str, tool_id: str) -> bool:
-        """Check if client has permission to use the tool"""
-        return (
+        """Check if client has permission to use the tool.
+        
+        Args:
+            client_id: The client ID to check
+            tool_id: The tool ID to check
+            
+        Returns:
+            bool: True if the client has permission, False otherwise
+        """
+        has_permission = (
             client_id in self.client_permissions 
             and tool_id in self.client_permissions[client_id]
         )
+        logger.debug(f"Permission check for client {client_id} and tool {tool_id}: {has_permission}")
+        return has_permission
     
     def get_available_tools(self, client_id: str) -> List[Tool]:
         """Get available tools for a client based on permissions"""
@@ -153,7 +311,8 @@ class ToolHandler:
                 client_id, 
                 call_id, 
                 "tool_not_found", 
-                f"Tool with ID {tool_id} not found"
+                f"Tool with ID {tool_id} not found",
+                tool_id=tool_id
             )
             return
         
@@ -163,7 +322,8 @@ class ToolHandler:
                 client_id, 
                 call_id, 
                 "permission_denied", 
-                "You don't have permission to use this tool"
+                "You don't have permission to use this tool",
+                tool_id=tool_id
             )
             return
         
@@ -200,21 +360,23 @@ class ToolHandler:
         except Exception as e:
             logger.exception(f"Error executing tool {tool_id}")
             await self._send_tool_error(
-                client_id, 
-                call_id, 
-                "execution_error", 
-                str(e)
+                client_id=client_id, 
+                call_id=call_id, 
+                error_code="execution_error", 
+                error_message=str(e),
+                tool_id=tool_id
             )
     
     async def _send_tool_error(
-        self, client_id: str, call_id: str, error_code: str, error_message: str
+        self, client_id: str, call_id: str, error_code: str, error_message: str, tool_id: Optional[str] = None
     ) -> None:
         # Notify client of the error using the event class
         event = ToolCallErrorEvent.create(
             client_id=client_id,
             error_code=error_code,
             error_message=error_message,
-            message_id=call_id
+            message_id=call_id,
+            tool_id=tool_id
         )
         await self.connection_manager.send_personal_message(event.to_dict(), client_id)
         
@@ -289,19 +451,19 @@ class WeatherTool(Tool):
             "timestamp": datetime.now(UTC).isoformat()
         }
 
-
 # Global tool handler instance
 _tool_handler = None
 
-
-def get_tool_handler() -> ToolHandler:
-    """Get the global tool handler instance"""
+def get_tool_handler(connection_manager: Optional[ConnectionManager] = None) -> ToolHandler:
+    """Get the global tool handler instance.
+    
+    Args:
+        connection_manager: Optional connection manager to use
+        
+    Returns:
+        ToolHandler: The global tool handler instance
+    """
     global _tool_handler
     if _tool_handler is None:
-        _tool_handler = ToolHandler()
-        
-        # Register built-in tools
-        _tool_handler.register_tool(EchoTool())
-        _tool_handler.register_tool(WeatherTool())
-        
+        _tool_handler = ToolHandler(connection_manager=connection_manager)
     return _tool_handler

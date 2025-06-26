@@ -28,22 +28,32 @@ class ConnectionManager:
         logger.info("Connection manager initialized")
 
     async def connect(self, websocket: WebSocket, client_id: str):
-        """Accept a new WebSocket connection"""
-        await websocket.accept()
+        """Register a new WebSocket connection
+        
+        Note: The WebSocket should already be accepted before calling this method.
+        """
+        if client_id in self.active_connections:
+            logger.warning(f"Client {client_id} is already connected. Replacing existing connection.")
+            
         self.active_connections[client_id] = websocket
         self.client_subscriptions[client_id] = set()
 
-        logger.info(f"Client {client_id} connected")
+        logger.info(f"Client {client_id} registered with connection manager")
 
-        # Send welcome message
-        await self.send_personal_message(
-            {
-                "type": "connection_established",
-                "client_id": client_id,
-                "message": "Connected to SketchDojo WebSocket",
-            },
-            client_id,
-        )
+        try:
+            # Send welcome message
+            await self.send_personal_message(
+                {
+                    "type": "connection_established",
+                    "client_id": client_id,
+                    "message": "Connected to SketchDojo WebSocket",
+                },
+                client_id,
+            )
+            logger.debug(f"Sent welcome message to client {client_id}")
+        except Exception as e:
+            logger.error(f"Failed to send welcome message to {client_id}: {str(e)}", exc_info=True)
+            # Don't raise, as the connection is still valid even if welcome message fails
 
     async def disconnect(self, client_id: str):
         """Handle client disconnection"""

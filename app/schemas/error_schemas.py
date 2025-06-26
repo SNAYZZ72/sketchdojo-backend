@@ -23,8 +23,16 @@ class ErrorResponse(BaseModel):
     details: Optional[List[ValidationErrorDetail]] = Field(
         None, description="Validation error details"
     )
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(UTC).isoformat(),
+        description="ISO 8601 timestamp of when the error occurred"
+    )
     request_id: Optional[str] = Field(None, description="Request correlation ID")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
 
 
 class NotFoundResponse(ErrorResponse):

@@ -181,8 +181,7 @@ async def generate_webtoon_async(
     task_id: str, request_data: Dict[str, Any]
 ) -> Dict[str, Any]:
     """Async webtoon generation logic"""
-    # Initialize connection manager (for backward compatibility) and notification publisher
-    connection_manager = get_connection_manager()
+    # Initialize notification publisher
     notification_publisher = get_redis_publisher()
 
     try:
@@ -200,7 +199,10 @@ async def generate_webtoon_async(
 
         # Get services needed for generation
         from app.application.dto.generation_dto import GenerationRequestDTO
-        from app.application.services.generation_service import GenerationService
+        from app.application.interfaces.ai_provider import AIProvider
+        from app.application.interfaces.image_generator import ImageGenerator
+        from app.application.interfaces.notification_publisher import INotificationPublisher
+        from app.application.services.generation_service import create_generation_service
         from app.config import get_settings
         from app.infrastructure.ai.openai_provider import OpenAIProvider
         from app.infrastructure.image.stability_provider import StabilityProvider
@@ -236,7 +238,8 @@ async def generate_webtoon_async(
             api_url=settings.stability_api_url,
         )
 
-        generation_service = GenerationService(
+        # Create generation service using factory function
+        generation_service = create_generation_service(
             ai_provider=ai_provider,
             image_generator=image_generator,
             task_repository=task_repo,
@@ -255,8 +258,13 @@ async def generate_webtoon_async(
         )
 
         # Step 2: Generate story
-        await connection_manager.broadcast_generation_progress(
-            task_id, 20.0, "Generating story structure..."
+        notification_publisher.publish(
+            NotificationType.TASK_PROGRESS,
+            {
+                "task_id": task_id,
+                "progress": 20.0,
+                "message": "Generating story structure..."
+            }
         )
 
         # Use helper function to ensure art_style is a valid string
@@ -271,8 +279,13 @@ async def generate_webtoon_async(
         )
 
         # Step 3: Generate scenes
-        await connection_manager.broadcast_generation_progress(
-            task_id, 40.0, "Creating panel descriptions..."
+        notification_publisher.publish(
+            NotificationType.TASK_PROGRESS,
+            {
+                "task_id": task_id,
+                "progress": 40.0,
+                "message": "Creating panel descriptions..."
+            }
         )
 
         scenes_data = await ai_provider.generate_scene_descriptions(
@@ -329,8 +342,13 @@ async def generate_webtoon_async(
             # Panel completion notification is handled through task progress
 
         # Step 5: Finalize webtoon
-        await connection_manager.broadcast_generation_progress(
-            task_id, 95.0, "Finalizing webtoon..."
+        notification_publisher.publish(
+            NotificationType.TASK_PROGRESS,
+            {
+                "task_id": task_id,
+                "progress": 95.0,
+                "message": "Finalizing webtoon..."
+            }
         )
 
         # Get the existing webtoon_id from request_data, which was created as a placeholder
@@ -546,8 +564,8 @@ async def generate_webtoon_async(
             await task_repository.save(task)
 
 
-async def notify_generation_failed(task_id: str, error_message: str):
-    """Notify WebSocket clients about generation failure via Redis"""
+def notify_generation_failed(task_id: str, error_message: str):
+    """Notify clients about generation failure via Redis"""
     try:
         notification_publisher = get_redis_publisher()
         notification_publisher.publish(
@@ -623,13 +641,18 @@ def start_panel_generation_task(self, task_id: str, request_data: Dict[str, Any]
         # Save the updated task
         asyncio.run(task_repo.save(task))
         
-        # Get websocket connection manager
-        connection_manager = get_connection_manager()
+        # Initialize notification publisher
+        notification_publisher = get_redis_publisher()
         
         # Notify clients that processing has started
-        asyncio.run(connection_manager.broadcast_generation_progress(
-            task_id, 0.0, "Starting panel generation..."
-        ))
+        notification_publisher.publish(
+            NotificationType.TASK_PROGRESS,
+            {
+                "task_id": task_id,
+                "progress": 0.0,
+                "message": "Starting panel generation..."
+            }
+        )
         
         # Run the async generation logic in a synchronous context
         try:
@@ -646,11 +669,16 @@ def start_panel_generation_task(self, task_id: str, request_data: Dict[str, Any]
             # Save the completed task
             asyncio.run(task_repo.save(task))
             
-            # Notify WebSocket clients of completion
-            logger.info(f"Broadcasting panel generation completion: {task_id}")
-            asyncio.run(connection_manager.broadcast_generation_completed(
-                task_id, result
-            ))
+            # Notify clients of completion via Redis
+            logger.info(f"Publishing panel generation completion notification: {task_id}")
+            notification_publisher.publish(
+                NotificationType.TASK_COMPLETED,
+                {
+                    "task_id": task_id,
+                    "result": result,
+                    "webtoon_id": request_data.get("webtoon_id")
+                }
+            )
             
             # Fetch and broadcast HTML content if we have a webtoon_id
             if 'webtoon_id' in request_data:
@@ -666,10 +694,17 @@ def start_panel_generation_task(self, task_id: str, request_data: Dict[str, Any]
                     # Fetch HTML content asynchronously
                     html_content = asyncio.run(webtoon_service.get_webtoon_html_content(UUID(webtoon_id)))
                     
-                    # Broadcast update if HTML content is available
+                    # Publish webtoon update notification if HTML content is available
                     if html_content:
-                        logger.info(f"Broadcasting HTML update for webtoon: {webtoon_id}")
-                        asyncio.run(connection_manager.broadcast_webtoon_updated(webtoon_id, html_content))
+                        logger.info(f"Publishing webtoon update notification for: {webtoon_id} with task_id: {task_id}")
+                        notification_publisher.publish(
+                            NotificationType.WEBTOON_UPDATED,
+                            {
+                                "task_id": task_id,
+                                "webtoon_id": webtoon_id,
+                                "html_content": html_content
+                            }
+                        )
                 except Exception as html_error:
                     logger.error(f"Error fetching/broadcasting HTML content: {str(html_error)}", exc_info=True)
             
@@ -689,16 +724,15 @@ def start_panel_generation_task(self, task_id: str, request_data: Dict[str, Any]
             asyncio.run(task_repo.save(task))
             
             # Notify clients of failure
-            asyncio.run(notify_generation_failed(task_id, str(e)))
+            notify_generation_failed(task_id, str(e))
             # Re-raise the exception for Celery to handle
             raise
             
     except Exception as e:
         logger.error(f"Error in panel generation task: {str(e)}", exc_info=True)
-        # Notify clients of failure through WebSocket
+        # Notify clients of failure through Redis
         try:
-            connection_manager = get_connection_manager()
-            asyncio.run(notify_generation_failed(task_id, str(e)))
+            notify_generation_failed(task_id, str(e))
         except Exception as notify_error:
             logger.error(f"Failed to notify clients of error: {str(notify_error)}")
         # Re-raise the exception for Celery to handle
@@ -707,10 +741,10 @@ def start_panel_generation_task(self, task_id: str, request_data: Dict[str, Any]
 
 def generate_webtoon_sync(task_id: str, request_data: Dict[str, Any]) -> Dict[str, Any]:
     """Synchronous version of webtoon generation logic for Celery tasks"""
-    # We'll still use the async connection manager for WebSockets, but through asyncio.run
+    # Use the Redis publisher for notifications
     logger.info(f"Starting synchronous webtoon generation for task: {task_id}")
     
-    connection_manager = get_connection_manager()
+    notification_publisher = get_redis_publisher()
     
     # Initialize repositories and services
     try:

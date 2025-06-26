@@ -1,101 +1,103 @@
 # app/infrastructure/repositories/chat_repository_redis.py
 """
-Redis implementation of the ChatRepository
+Redis implementation of the ChatRepository using BaseRedisRepository
 """
 import json
 import logging
 from datetime import UTC, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type, Union
 from uuid import UUID
 
 from app.application.interfaces.storage_provider import StorageProvider
 from app.domain.entities.chat import ChatMessage, ChatRoom
 from app.domain.mappers.chat_mapper import ChatDataMapper
 from app.domain.repositories.chat_repository import ChatRepository
+from ..utils.key_generator import chat_keys
+from .base_redis_repository import BaseRedisRepository
 
 logger = logging.getLogger(__name__)
 
 
-class ChatRepositoryRedis(ChatRepository):
+class ChatRepositoryRedis(BaseRedisRepository[ChatMessage], ChatRepository):
     """Redis implementation of the ChatRepository"""
 
     def __init__(self, storage: StorageProvider, mapper: ChatDataMapper = None):
-        self.storage = storage
-        self.message_key_prefix = "chat:message:"
-        self.room_key_prefix = "chat:room:"
-        self.webtoon_messages_prefix = "chat:webtoon:"
+        super().__init__(
+            storage=storage,
+            key_prefix=chat_keys.key("message"),
+            ttl_seconds=86400 * 30  # 30 days TTL
+        )
         self.mapper = mapper or ChatDataMapper()
         logger.info("ChatRepositoryRedis initialized")
+        
+    @property
+    def entity_class(self) -> Type[ChatMessage]:
+        return ChatMessage
 
-    def _get_message_key(self, entity_id: UUID) -> str:
-        """Get storage key for message entity ID"""
-        return f"{self.message_key_prefix}{str(entity_id)}"
-    
-    def _get_room_key(self, entity_id: UUID) -> str:
+    def _get_room_key(self, entity_id: Union[UUID, str, int]) -> str:
         """Get storage key for room entity ID"""
-        return f"{self.room_key_prefix}{str(entity_id)}"
+        return chat_keys.room(entity_id)
     
-    def _get_webtoon_messages_key(self, webtoon_id: UUID) -> str:
+    def _get_webtoon_messages_key(self, webtoon_id: Union[UUID, str, int]) -> str:
         """Get storage key for webtoon messages list"""
-        return f"{self.webtoon_messages_prefix}{str(webtoon_id)}:messages"
+        return chat_keys.webtoon_messages(webtoon_id)
+        
+    def _get_entity_key(self, entity_id: Union[UUID, str, int]) -> str:
+        """
+        Get the Redis key for an entity ID.
+        
+        Args:
+            entity_id: The entity ID
+            
+        Returns:
+            str: The Redis key
+        """
+        return f"{self.key_prefix}:{str(entity_id)}"
 
-    async def _save_message_impl(self, entity: ChatMessage) -> ChatMessage:
-        """Internal implementation to save a chat message"""
-        try:
-            # Serialize the entity
-            data = self.mapper.message_to_dict(entity)
-            
-            # Save message data
-            message_key = self._get_message_key(entity.id)
-            success = await self.storage.set(message_key, json.dumps(data))
-            
-            if not success:
-                raise RuntimeError(f"Failed to save chat message {entity.id}")
-                
-            # Add to webtoon messages list
-            if entity.webtoon_id:
-                webtoon_messages_key = self._get_webtoon_messages_key(entity.webtoon_id)
-                # Add message ID to the webtoon's message list
-                await self.storage.append_to_list(webtoon_messages_key, str(entity.id))
-                
-            return entity
-        except Exception as e:
-            logger.error(f"Error saving chat message {entity.id}: {str(e)}")
-            raise
+    def _serialize_entity(self, entity: ChatMessage) -> str:
+        """Serialize chat message to JSON string"""
+        data = self.mapper.message_to_dict(entity)
+        return json.dumps(data)
+        
+    def _deserialize_entity(self, data: str, entity_class: Type[ChatMessage] = None) -> ChatMessage:
+        """Deserialize JSON string to ChatMessage"""
+        data_dict = json.loads(data) if isinstance(data, str) else data
+        return self.mapper.message_from_dict(data_dict)
     
     async def save(self, entity: ChatMessage) -> ChatMessage:
         """Save a chat message (create or update)"""
-        return await self._save_message_impl(entity)
-        
+        try:
+            # First save the message using base repository
+            entity = await super().save(entity)
+            
+            # Add to webtoon messages list if webtoon_id is present
+            if entity.webtoon_id:
+                webtoon_messages_key = self._get_webtoon_messages_key(entity.webtoon_id)
+                # Use a set to avoid duplicates
+                await self.storage.add_to_sorted_set(
+                    webtoon_messages_key,
+                    {str(entity.id): datetime.now(UTC).timestamp()}
+                )
+                
+            return entity
+        except Exception as e:
+            self.logger.error("Error saving chat message %s: %s", entity.id, str(e))
+            raise
+    
     async def save_message(self, entity: ChatMessage) -> ChatMessage:
         """Save a chat message (create or update) - for backward compatibility"""
-        return await self._save_message_impl(entity)
-
-
+        return await self.save(entity)
+    
     async def create(self, entity: ChatMessage) -> ChatMessage:
         """Create a new chat message (delegates to save)"""
         return await self.save(entity)
-        
-    async def get_by_id(self, entity_id: UUID) -> Optional[ChatMessage]:
-        """Get a chat message by its ID"""
-        try:
-            message_key = self._get_message_key(entity_id)
-            data_str = await self.storage.get(message_key)
-            
-            if not data_str:
-                return None
-                
-            data = json.loads(data_str) if isinstance(data_str, str) else data_str
-            return self.mapper.message_from_dict(data)
-        except Exception as e:
-            logger.error(f"Failed to get chat message {entity_id}: {str(e)}")
-            return None
         
     async def update(self, entity_id: UUID, data: Dict[str, Any]) -> Optional[ChatMessage]:
         """Update an entity"""
         try:
             existing_entity = await self.get_by_id(entity_id)
             if not existing_entity:
+                self.logger.warning("Entity %s not found for update", entity_id)
                 return None
                 
             # Update fields
@@ -197,33 +199,137 @@ class ChatRepositoryRedis(ChatRepository):
             return None
 
     async def get_by_webtoon_id(self, webtoon_id: UUID, limit: int = 100, skip: int = 0) -> List[ChatMessage]:
-        """Get chat messages for a specific webtoon"""
+        """Get chat messages for a specific webtoon
+        
+        This method retrieves messages for a webtoon using efficient batch fetching to minimize
+        Redis round trips. Messages are returned in reverse chronological order (newest first).
+        
+        Args:
+            webtoon_id: ID of the webtoon
+            limit: Maximum number of messages to return (default: 100, max: 1000)
+            skip: Number of messages to skip (for pagination)
+            
+        Returns:
+            List of ChatMessage objects, ordered by timestamp (newest first)
+            
+        Raises:
+            ValueError: If limit is invalid
+        """
+        # Validate input parameters
+        if not isinstance(limit, int) or limit <= 0:
+            raise ValueError("Limit must be a positive integer")
+            
+        # Enforce maximum page size
+        limit = min(limit, 1000)
+        
         try:
-            # Get list of message IDs for this webtoon
             webtoon_messages_key = self._get_webtoon_messages_key(webtoon_id)
-            message_ids = await self.storage.get_list(webtoon_messages_key)
+            
+            # Get message IDs with scores (timestamps) in reverse order (newest first)
+            message_ids = await self.storage.get_sorted_set_range(
+                webtoon_messages_key,
+                start=skip,
+                stop=skip + limit - 1,
+                desc=True,
+                with_scores=False
+            )
             
             if not message_ids:
                 return []
                 
-            # Apply pagination
-            paginated_ids = message_ids[skip:skip + limit]
+            # Batch fetch all messages in a single Redis operation
+            messages = await self._batch_get_messages(message_ids)
             
-            # Get messages by IDs
-            messages = []
-            for message_id in paginated_ids:
-                message = await self.get_by_id(UUID(message_id))
-                if message:
-                    messages.append(message)
-                    
-            # Sort by timestamp (newest first)
-            messages.sort(key=lambda m: m.timestamp, reverse=True)
+            # Ensure we maintain the original sort order from the sorted set
+            message_map = {str(msg.id): msg for msg in messages}
+            return [message_map[msg_id] for msg_id in message_ids if msg_id in message_map]
             
-            return messages
         except Exception as e:
-            logger.error(f"Error getting chat messages for webtoon {webtoon_id}: {str(e)}")
+            logger.error("Error getting chat messages for webtoon %s: %s", webtoon_id, str(e))
             return []
     
+    async def _batch_get_messages(self, message_ids: List[Union[UUID, str]]) -> List[ChatMessage]:
+        """
+        Batch fetch multiple messages by their IDs.
+        
+        Args:
+            message_ids: List of message IDs to fetch
+            
+        Returns:
+            List of ChatMessage objects
+        """
+        if not message_ids:
+            return []
+            
+        try:
+            # Use pipeline to fetch multiple messages in a single round trip
+            pipeline = self.storage.redis_client.pipeline()
+            
+            # Queue up all the get operations
+            for msg_id in message_ids:
+                msg_key = self._get_entity_key(msg_id)
+                pipeline.get(msg_key)
+                
+            # Execute all operations in a single round trip
+            results = await pipeline.execute()
+            
+            # Process results
+            messages = []
+            for data in results:
+                if data:
+                    try:
+                        message = self._deserialize_entity(data)
+                        messages.append(message)
+                    except Exception as e:
+                        self.logger.error("Error deserializing message: %s", str(e))
+                        continue
+                        
+            return messages
+            
+        except Exception as e:
+            self.logger.error("Error in batch message fetch: %s", str(e))
+            return []
+
+    async def get_messages_by_webtoon(
+        self, webtoon_id: Union[UUID, str, int], skip: int = 0, limit: int = 100
+    ) -> List[ChatMessage]:
+        """
+        Get messages for a specific webtoon with pagination.
+        
+        Args:
+            webtoon_id: ID of the webtoon
+            skip: Number of messages to skip
+            limit: Maximum number of messages to return
+            
+        Returns:
+            List of ChatMessage objects, ordered by timestamp (newest first)
+        """
+        try:
+            webtoon_messages_key = self._get_webtoon_messages_key(webtoon_id)
+            
+            # Get message IDs with scores (timestamps) in reverse order (newest first)
+            message_ids = await self.storage.get_sorted_set_range(
+                webtoon_messages_key,
+                start=skip,
+                stop=skip + limit - 1,
+                desc=True,
+                with_scores=False
+            )
+            
+            if not message_ids:
+                return []
+                
+            # Batch fetch all messages in a single Redis operation
+            messages = await self._batch_get_messages(message_ids)
+            
+            # Ensure we maintain the original sort order from the sorted set
+            message_map = {str(msg.id): msg for msg in messages}
+            return [message_map[msg_id] for msg_id in message_ids if msg_id in message_map]
+            
+        except Exception as e:
+            self.logger.error("Error getting messages for webtoon %s: %s", webtoon_id, str(e))
+            return []
+
     async def save_room(self, room: ChatRoom) -> ChatRoom:
         """Save a chat room"""
         try:
@@ -257,33 +363,23 @@ class ChatRepositoryRedis(ChatRepository):
             return None
             
     async def get_chat_history(self, webtoon_id: UUID, limit: int = 100) -> List[ChatMessage]:
-        """Get chat history for a webtoon"""
-        try:
-            # Get list of message IDs for this webtoon
-            webtoon_messages_key = self._get_webtoon_messages_key(webtoon_id)
-            message_ids = await self.storage.get_list(webtoon_messages_key)
+        """Get chat history for a webtoon
+        
+        This is a convenience method that delegates to get_by_webtoon_id with a default
+        skip value of 0. It maintains backward compatibility while using the optimized
+        batch fetching implementation.
+        
+        Args:
+            webtoon_id: ID of the webtoon
+            limit: Maximum number of messages to return (default: 100, max: 1000)
             
-            if not message_ids:
-                return []
-                
-            # Apply pagination
-            paginated_ids = message_ids[:limit]
+        Returns:
+            List of ChatMessage objects, ordered by timestamp (newest first)
             
-            # Get messages by IDs
-            messages = []
-            for message_id in paginated_ids:
-                # Use a mock key for the test environment - real UUIDs aren't necessary
-                # as long as we call retrieve
-                message_key = f"chat:message:{message_id}"
-                data = await self.storage.retrieve(message_key)
-                # In the test environment, the mock will return data and this mapper will return
-                # the test message
-                messages.append(self.mapper.message_from_dict(data or {"id": message_id}))
-                    
-            return messages
-        except Exception as e:
-            logger.error(f"Error getting chat history for webtoon {webtoon_id}: {str(e)}")
-            return []
+        Raises:
+            ValueError: If limit is invalid
+        """
+        return await self.get_by_webtoon_id(webtoon_id, limit=limit, skip=0)
             
     async def get_rooms_for_webtoon(self, webtoon_id: UUID) -> List[ChatRoom]:
         """Get all rooms for a specific webtoon"""

@@ -129,9 +129,12 @@ def create_app() -> FastAPI:
         return Response(content=get_metrics(), media_type=get_metrics_content_type())
 
     # WebSocket endpoint
+    from fastapi import WebSocket
     from app.websocket.router import websocket_endpoint
-
-    app.add_websocket_route("/ws", websocket_endpoint)
+    
+    @app.websocket("/ws")
+    async def websocket_route(websocket: WebSocket):
+        await websocket_endpoint(websocket)
 
     return app
 

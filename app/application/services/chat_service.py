@@ -9,6 +9,8 @@ from typing import Dict, List, Optional, Tuple, Any
 from uuid import UUID, uuid4
 
 from app.application.interfaces.ai_provider import AIProvider
+from app.application.services.base_service import BaseService
+from app.core.error_handling.base_error_handler import BaseErrorHandler
 from app.domain.entities.chat import ChatMessage, ChatRoom, ToolCall
 from app.domain.repositories.chat_repository import ChatRepository
 from app.domain.repositories.webtoon_repository import WebtoonRepository
@@ -90,13 +92,27 @@ class ChatMessageFormatter:
         return formatted_messages
 
 
-class ChatService:
+class ChatService(BaseService):
     """Service for chat business operations"""
-
+    
     def __init__(self, 
                 repository: ChatRepository, 
                 ai_provider: Optional[AIProvider] = None,
-                webtoon_repository: Optional[WebtoonRepository] = None):
+                webtoon_repository: Optional[WebtoonRepository] = None,
+                error_handler: Optional[BaseErrorHandler] = None,
+                logger: Optional[logging.Logger] = None
+    ):
+        """Initialize the chat service.
+        
+        Args:
+            repository: The chat repository for data access
+            ai_provider: Optional AI provider for generating responses
+            webtoon_repository: Optional repository for webtoon data
+            error_handler: Optional error handler instance
+            logger: Optional logger instance
+        """
+        # Initialize with the provided logger or create a new one
+        super().__init__(error_handler=error_handler, logger=logger or logging.getLogger(__name__))
         self.repository = repository
         self.ai_provider = ai_provider
         self.webtoon_repository = webtoon_repository
@@ -205,69 +221,54 @@ class ChatService:
         Returns:
             A new chat message from the AI assistant, or None if generation fails
         """
-        if not self.ai_provider:
-            logger.warning("Cannot generate AI response: no AI provider available")
-            return None
-            
         try:
-            # Get recent chat history
-            history = await self.repository.get_by_webtoon_id(webtoon_id, limit=limit)
+            self.logger.info(f"Generating AI response for webtoon_id: {webtoon_id}")
             
-            if not history:
-                logger.info(f"No chat history found for webtoon {webtoon_id}, using system message and context")
+            # Get chat history for context
+            messages = await self.get_chat_history(webtoon_id, limit=limit)
             
-            # Get webtoon details for context
+            # Add system prompt with webtoon context if available
+            prompt_templates = PromptTemplates()
             webtoon_context = await self._get_webtoon_context(webtoon_id)
+            system_prompt = prompt_templates.get_chat_system_prompt(webtoon_context=webtoon_context) if webtoon_context else prompt_templates.get_chat_system_prompt()
             
-            # Format messages for AI provider
-            formatted_messages = ChatMessageFormatter.format_messages_for_ai_provider(history)
+            # Format messages for the AI provider
+            formatted_messages = ChatMessageFormatter.format_messages_for_ai_provider(messages)
+            
+            # Add system prompt if not already present
+            if not any(msg.get('role') == 'system' for msg in formatted_messages):
+                formatted_messages.insert(0, {"role": "system", "content": system_prompt})
             
             # Get available tools
-            available_tools = ToolProvider.get_available_tools()
-            formatted_tools = ToolProvider.format_tools_for_ai_provider(available_tools)
+            tools = ToolProvider.get_available_tools()
             
-            logger.info(f"Calling AI provider with {len(formatted_tools)} tools and {len(formatted_messages)} messages")
-            
-            # Add system message with instructions for the agent using centralized prompt templates
-            prompt_templates = PromptTemplates()
-            system_prompt = prompt_templates.get_chat_system_prompt(webtoon_context)
-            formatted_messages.insert(0, {
-                "role": "system",
-                "content": system_prompt
-            })
-            
-            # Generate completion with tools
+            # Generate response using AI provider
             response = await self.ai_provider.generate_chat_completion(
                 messages=formatted_messages,
-                webtoon_context=webtoon_context,
-                tools=formatted_tools
+                tools=ToolProvider.format_tools_for_ai_provider(tools) if tools else None
             )
             
-            # Create and persist assistant message from AI response
-            tool_calls = None
-            if "tool_calls" in response:
-                # Map from OpenAI's tool_calls format to our format
-                tool_calls = [{
-                    "id": tc.get("id"),
-                    "name": tc.get("name"),
-                    "arguments": tc.get("arguments"),
-                    "status": "pending",
-                } for tc in response["tool_calls"]]
+            # Create assistant message from response
+            if response and 'content' in response and response['content']:
+                ai_message = await self.create_message(
+                    webtoon_id=webtoon_id,
+                    client_id="system",
+                    role="assistant",
+                    content=response['content'],
+                    tool_calls=response.get('tool_calls')
+                )
+                self.logger.info(f"Successfully generated AI response for webtoon_id: {webtoon_id}")
+                return ai_message
                 
-                logger.info(f"AI response contains {len(tool_calls)} tool calls")
-            
-            ai_message = await self.create_message(
-                webtoon_id=webtoon_id,
-                client_id="ai_assistant",
-                role="assistant",
-                content=response.get("content", ""),
-                tool_calls=tool_calls
-            )
-            
-            return ai_message
-            
+            self.logger.warning(f"Empty AI response for webtoon_id: {webtoon_id}")
+            return None
+                
         except Exception as e:
-            logger.error(f"Error generating AI response: {str(e)}")
+            error_context = {
+                "webtoon_id": str(webtoon_id),
+                "limit": limit
+            }
+            self.handle_error(e, context=error_context)
             logger.exception("Exception details:")
             # Create error message on failure
             return await self.create_message(
@@ -342,8 +343,24 @@ class ChatService:
             webtoon_id: The ID of the webtoon
             
         Returns:
-            Dict containing webtoon context information
+            Dict containing webtoon context information with JSON-serializable values
         """
+        def make_serializable(obj):
+            """Recursively make an object JSON-serializable"""
+            if obj is None:
+                return None
+            if isinstance(obj, (str, int, float, bool)):
+                return obj
+            if isinstance(obj, dict):
+                return {k: make_serializable(v) for k, v in obj.items()}
+            if isinstance(obj, (list, tuple, set)):
+                return [make_serializable(x) for x in obj]
+            if hasattr(obj, 'isoformat'):  # Handle datetime
+                return obj.isoformat()
+            if hasattr(obj, '__dict__'):
+                return make_serializable(obj.__dict__)
+            return str(obj)
+
         context = {"webtoon_id": str(webtoon_id)}
         
         # If we have a webtoon repository, fetch more detailed information
@@ -351,26 +368,37 @@ class ChatService:
             try:
                 webtoon = await self.webtoon_repository.get_by_id(webtoon_id)
                 if webtoon:
-                    context.update({
-                        "title": webtoon.title,
-                        "description": webtoon.description,
-                        "genre": webtoon.genre,
-                        "style": webtoon.style.name if webtoon.style else "default",
-                        "character_count": len(webtoon.characters) if hasattr(webtoon, "characters") else 0,
-                        "scene_count": len(webtoon.scenes) if hasattr(webtoon, "scenes") else 0
-                    })
+                    # Only include attributes that exist on the Webtoon model
+                    webtoon_context = {
+                        "title": str(getattr(webtoon, 'title', '')),  # Ensure string
+                        "description": str(getattr(webtoon, 'description', '')),  # Ensure string
+                        "art_style": str(getattr(webtoon, 'art_style', '')),  # Ensure string
+                        "is_published": bool(getattr(webtoon, 'is_published', False)),  # Ensure bool
+                        "panel_count": int(getattr(webtoon, 'panel_count', 0)),  # Ensure int
+                        "character_count": int(getattr(webtoon, 'character_count', 0))  # Ensure int
+                    }
+                    
+                    # Safely get metadata if it exists and make it serializable
+                    metadata = getattr(webtoon, 'metadata', {})
+                    if isinstance(metadata, dict):
+                        webtoon_context.update(make_serializable(metadata))
+                    
+                    context.update(webtoon_context)
+                    
             except Exception as e:
-                logger.warning(f"Error getting webtoon context: {str(e)}")
+                logger.warning(f"Error getting webtoon context: {str(e)}", exc_info=True)
                 # Continue with basic context
         
         return context
 
 
 # Factory function to get a ChatService instance
-async def get_chat_service(
+def get_chat_service(
     repository: ChatRepository, 
     ai_provider: Optional[AIProvider] = None,
-    webtoon_repository: Optional[WebtoonRepository] = None
+    webtoon_repository: Optional[WebtoonRepository] = None,
+    error_handler: Optional[BaseErrorHandler] = None,
+    logger: Optional[logging.Logger] = None
 ) -> ChatService:
     """
     Get a configured ChatService instance
@@ -379,8 +407,16 @@ async def get_chat_service(
         repository: The chat repository to use
         ai_provider: Optional AI provider for generating responses
         webtoon_repository: Optional repository for accessing webtoon data
+        error_handler: Optional error handler instance
+        logger: Optional logger instance
         
     Returns:
         ChatService instance
     """
-    return ChatService(repository, ai_provider, webtoon_repository)
+    return ChatService(
+        repository=repository,
+        ai_provider=ai_provider,
+        webtoon_repository=webtoon_repository,
+        error_handler=error_handler,
+        logger=logger
+    )

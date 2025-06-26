@@ -107,6 +107,118 @@ class RedisStorage(StorageProvider):
         except Exception as e:
             logger.error(f"Error checking existence for key {key}: {str(e)}")
             return False
+            
+    async def expire(self, key: str, ttl_seconds: int) -> bool:
+        """Set expiration time for a key in Redis
+        
+        Args:
+            key: The key to set expiration for
+            ttl_seconds: Time to live in seconds
+            
+        Returns:
+            bool: True if timeout was set, False if key does not exist or error occurred
+        """
+        try:
+            result = await self.redis_client.expire(key, ttl_seconds)
+            if result:
+                logger.debug(f"Set TTL of {ttl_seconds} seconds for key: {key}")
+            else:
+                logger.warning(f"Failed to set TTL for key {key}: key does not exist")
+            return bool(result)
+        except Exception as e:
+            logger.error(f"Error setting TTL for key {key}: {str(e)}")
+            return False
+            
+    async def get_sorted_set_range(
+        self,
+        key: str,
+        start: int = 0,
+        stop: int = -1,
+        with_scores: bool = False,
+        desc: bool = False,
+    ) -> List[Any]:
+        """Retrieve a range of members from a sorted set.
+        
+        Args:
+            key: The key of the sorted set
+            start: Starting index (0-based, inclusive)
+            stop: Ending index (inclusive, -1 means to the end)
+            with_scores: Whether to include scores in the result
+            desc: Whether to sort in descending order (highest scores first)
+            
+        Returns:
+            List of members (or member-score tuples if with_scores=True)
+        """
+        try:
+            # Use ZREVRANGE for descending order, ZRANGE for ascending
+            if desc:
+                result = await self.redis_client.zrevrange(
+                    name=key,
+                    start=start,
+                    end=stop,
+                    withscores=with_scores
+                )
+            else:
+                result = await self.redis_client.zrange(
+                    name=key,
+                    start=start,
+                    end=stop,
+                    withscores=with_scores
+                )
+            
+            # Convert scores to float if needed and decode bytes to strings
+            if with_scores and result:
+                return [
+                    (member.decode('utf-8') if isinstance(member, bytes) else member, 
+                     float(score))
+                    for member, score in result
+                ]
+            
+            # Decode bytes to strings if needed
+            return [
+                item.decode('utf-8') if isinstance(item, bytes) else item
+                for item in result
+            ]
+            
+        except Exception as e:
+            logger.error(f"Error getting range from sorted set {key}: {str(e)}")
+            return []
+            
+    async def close(self):
+        """Close the Redis connection."""
+        if hasattr(self, 'redis_client') and self.redis_client:
+            await self.redis_client.close()
+            
+    async def add_to_sorted_set(self, key: str, members: Dict[str, float]) -> int:
+        """Add one or more members to a sorted set, or update their score if they already exist
+        
+        Args:
+            key: The key of the sorted set
+            members: Dictionary of member -> score mappings to add/update
+            
+        Returns:
+            int: Number of members added (not including updates)
+        """
+        try:
+            # Ensure all scores are properly converted to float
+            members_with_float_scores = {
+                member: float(score) 
+                for member, score in members.items()
+            }
+            
+            # Use zadd with the proper syntax for redis-py
+            added = await self.redis_client.zadd(key, members_with_float_scores)
+            
+            logger.debug(f"Added/updated {len(members)} members to sorted set {key}")
+            return added
+            
+        except (ValueError, TypeError) as e:
+            error_msg = f"Invalid score value in members dict: {members}. Error: {str(e)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg) from e
+        except Exception as e:
+            logger.error(f"Error adding to sorted set {key}: {str(e)}")
+            raise
 
     async def list_keys(self, pattern: str = "*") -> List[str]:
         """List keys matching pattern"""

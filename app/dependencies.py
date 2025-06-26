@@ -9,9 +9,9 @@ from fastapi import Depends
 from app.application.interfaces.ai_provider import AIProvider
 from app.application.interfaces.image_generator import ImageGenerator
 from app.application.interfaces.storage_provider import StorageProvider
-from app.application.services.character_service import CharacterService
 from app.application.services.chat_service import ChatService
-from app.application.services.generation_service import GenerationService
+from app.application.services.character_service import CharacterService
+from app.application.services.generation_service import GenerationService, create_generation_service
 from app.application.services.scene_service import SceneService
 from app.application.services.webtoon_service import WebtoonService
 from app.config import Settings, get_settings
@@ -134,8 +134,13 @@ def get_generation_service(
     webtoon_repository: WebtoonRepository = Depends(get_webtoon_repository),
     task_repository: TaskRepository = Depends(get_task_repository),
 ) -> GenerationService:
-    """Get generation service instance"""
-    return GenerationService(
+    """
+    Get generation service instance using the factory function.
+    
+    Returns:
+        GenerationService: Configured instance of GenerationService with all dependencies injected
+    """
+    return create_generation_service(
         ai_provider=ai_provider,
         image_generator=image_generator,
         webtoon_repository=webtoon_repository,

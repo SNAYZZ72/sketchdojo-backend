@@ -240,6 +240,7 @@ class ToolCallErrorEvent(WebSocketEvent):
     call_index: Optional[int]
     error_code: str
     error_message: str
+    tool_id: Optional[str] = None
 
     @classmethod
     def create(
@@ -249,6 +250,7 @@ class ToolCallErrorEvent(WebSocketEvent):
         error_message: str,
         message_id: Optional[str] = None,
         call_index: Optional[int] = None,
+        tool_id: Optional[str] = None,
     ):
         return cls(
             event_type="tool_call_error",
@@ -256,8 +258,10 @@ class ToolCallErrorEvent(WebSocketEvent):
             data={
                 "client_id": client_id,
                 "message_id": message_id,
+                "call_id": message_id,  # Use message_id as call_id for backward compatibility
                 "call_index": call_index,
                 "error_code": error_code,
+                "tool_id": tool_id,
                 "error_message": error_message,
             },
             client_id=client_id,
