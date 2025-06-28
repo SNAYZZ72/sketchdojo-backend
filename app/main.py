@@ -3,9 +3,11 @@
 FastAPI application entry point for SketchDojo backend
 """
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
+from fastapi.staticfiles import StaticFiles
 
 from app.api.middleware.cors import setup_cors
 from app.api.middleware.logging import LoggingMiddleware
@@ -99,6 +101,19 @@ def create_app() -> FastAPI:
     app.add_middleware(LoggingMiddleware)
     if settings.enable_metrics:
         app.add_middleware(MetricsMiddleware)
+        
+    # Create static files directory if it doesn't exist
+    static_dir = "/app/storage/generated_images"
+    os.makedirs(static_dir, exist_ok=True)
+    # Set permissions to ensure both containers can read/write
+    try:
+        os.chmod(static_dir, 0o777)
+        logging.info(f"Created and set permissions for static directory: {static_dir}")
+    except Exception as e:
+        logging.warning(f"Could not set permissions on {static_dir}: {str(e)}")
+        
+    # Mount static files from shared storage volume
+    app.mount("/static/generated_images", StaticFiles(directory=static_dir), name="generated_images")
 
     # Include API routes
     app.include_router(

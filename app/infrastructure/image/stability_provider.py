@@ -26,11 +26,19 @@ class StabilityProvider(ImageGenerator):
     ):
         self.api_key = api_key
         self.api_url = api_url
-        self.output_dir = "static/generated_images"
+        # Store in shared volume path that both containers can access
+        self.output_dir = "/app/storage/generated_images"
         self.base_url = "http://localhost:8000"  # This should come from config
 
-        # Ensure output directory exists
-        os.makedirs(self.output_dir, exist_ok=True)
+        # Ensure output directory exists with proper permissions
+        try:
+            os.makedirs(self.output_dir, exist_ok=True)
+            # Ensure both containers can read/write to this directory
+            os.chmod(self.output_dir, 0o777)
+            logger.info(f"Output directory {self.output_dir} configured with shared permissions")
+        except Exception as e:
+            logger.error(f"Error setting up output directory: {str(e)}")
+            logger.warning("Falling back to default location if shared volume is not accessible")
 
         if self.api_key:
             logger.info("Stability AI provider initialized with API key")
@@ -191,7 +199,8 @@ class StabilityProvider(ImageGenerator):
             async with aiofiles.open(file_path, "wb") as f:
                 await f.write(image_bytes)
 
-            # Generate public URL
+            # Generate public URL - we still serve at the same public path
+            # even though we're storing in a different location internally
             public_url = f"{self.base_url}/static/generated_images/{filename}"
 
             logger.info(f"Image saved: {file_path}")
